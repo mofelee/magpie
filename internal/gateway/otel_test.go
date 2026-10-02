@@ -32,6 +32,15 @@ func TestOTelSessionDedupOnlyUnkeyedLoopback(t *testing.T) {
 	if err := os.WriteFile(path, []byte("{\"type\":\"session\",\"id\":\"session\"}\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv("CODEX_HOME", t.TempDir())
+	codex := filepath.Join(os.Getenv("CODEX_HOME"), "sessions", "2026", "10", "03", "rollout-2026-10-03T00-00-00-codex-session.jsonl")
+	if err := os.MkdirAll(filepath.Dir(codex), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(codex, []byte(`{"type":"session_meta","payload":{"id":"codex-session","base_instructions":"`+strings.Repeat("x", 24<<10)+`"}}`+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
 	received := make(chan []byte, 32)
 	collector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
@@ -46,6 +55,35 @@ func TestOTelSessionDedupOnlyUnkeyedLoopback(t *testing.T) {
 	t.Setenv("MAGPIE_OTEL_SESSIONS", "true")
 	stop := usage.StartOTel()
 	t.Cleanup(stop)
+	// Header-only first request: no user event or completed observation exists.
+	if !usage.OTelSession("pi", "session") {
+		t.Fatal("header-only session unavailable before first poll")
+	}
+	first := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"m1","messages":[{"role":"user","content":"hello"}]}`))
+	first.RemoteAddr = "127.0.0.1:1234"
+	first.Header.Set("User-Agent", "pi/1.0")
+	first.Header.Set("X-Session-Id", "session")
+	first.Header.Set("traceparent", fmt.Sprintf("00-%032x-%016x-01", 999, 999))
+	w := httptest.NewRecorder()
+	New().Handler().ServeHTTP(w, first)
+	if w.Code != 200 {
+		t.Fatalf("first request: %d %s", w.Code, w.Body.String())
+	}
+	if !usage.OTelSession("codex", "codex-session") {
+		t.Fatal("real-size Codex header unavailable before first poll")
+	}
+	codexRequest := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"m1","messages":[{"role":"user","content":"hello"}]}`))
+	codexRequest.RemoteAddr = "127.0.0.1:1234"
+	codexRequest.Header.Set("User-Agent", "codex_cli_rs/1.0")
+	codexRequest.Header.Set("Authorization", "Bearer "+TokenFor("codex"))
+	codexRequest.Header.Set("session_id", "codex-session")
+	codexRequest.Header.Set("traceparent", fmt.Sprintf("00-%032x-%016x-01", 998, 998))
+	codexReply := httptest.NewRecorder()
+	New().Handler().ServeHTTP(codexReply, codexRequest)
+	if codexReply.Code != 200 {
+		t.Fatalf("Codex first request: %d", codexReply.Code)
+	}
+
 	b, _ := json.Marshal(map[string]any{"type": "message", "id": "user", "timestamp": time.Now(), "message": map[string]any{"role": "user", "content": "private"}})
 	h, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
@@ -56,32 +94,33 @@ func TestOTelSessionDedupOnlyUnkeyedLoopback(t *testing.T) {
 	}
 	h.Close()
 	deadline := time.Now().Add(6 * time.Second)
-	for !usage.OTelSession("pi", "session") && time.Now().Before(deadline) {
+	for !usage.OTelSessionAgent("pi") && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
-	if !usage.OTelSession("pi", "session") {
+	if !usage.OTelSessionAgent("pi") {
 		t.Fatal("local Pi reader unavailable")
 	}
 	cases := []struct {
-		name, addr, key   string
-		session, override string
-		dedup             bool
+		name, addr, key         string
+		session, override, kind string
+		dedup                   bool
 	}{
-		{"loopback", "127.0.0.1:1234", "", "", "", true},
-		{"IPv6 loopback", "[::1]:1234", "", "", "", true},
-		{"LAN", "192.168.1.5:1234", "key", "", "", false},
-		{"Docker", "172.17.0.2:1234", "key", "", "", false},
-		{"WSL", "172.22.0.2:1234", "key", "", "", false},
-		{"keyed loopback", "127.0.0.1:1234", "key", "", "", false},
-		{"unkeyed remote", "192.168.1.5:1234", "", "", "", false},
-		{"visible native session", "127.0.0.1:1234", "", "session", "", true},
-		{"WSL mirrored unseen session", "127.0.0.1:1234", "", "wsl-session", "", false},
-		{"Docker Desktop unseen session", "127.0.0.1:1234", "", "docker-session", "", false},
-		{"visible native overrides routing", "127.0.0.1:1234", "", "session", "routing", true},
-		{"unseen native overrides visible routing", "127.0.0.1:1234", "", "wsl-session", "session", false},
-		{"visible Magpie session only", "127.0.0.1:1234", "", "", "session", true},
-		{"unseen Magpie session only", "127.0.0.1:1234", "", "", "wsl-session", false},
-		{"keyed visible session", "127.0.0.1:1234", "key", "session", "", false},
+		{"loopback", "127.0.0.1:1234", "", "", "", "", true},
+		{"IPv6 loopback", "[::1]:1234", "", "", "", "", true},
+		{"LAN", "192.168.1.5:1234", "key", "", "", "", false},
+		{"Docker", "172.17.0.2:1234", "key", "", "", "", false},
+		{"WSL", "172.22.0.2:1234", "key", "", "", "", false},
+		{"keyed loopback", "127.0.0.1:1234", "key", "", "", "", false},
+		{"unkeyed remote", "192.168.1.5:1234", "", "", "", "", false},
+		{"visible native session", "127.0.0.1:1234", "", "session", "", "", true},
+		{"WSL mirrored unseen session", "127.0.0.1:1234", "", "wsl-session", "", "", false},
+		{"Docker Desktop unseen session", "127.0.0.1:1234", "", "docker-session", "", "", false},
+		{"visible native overrides routing", "127.0.0.1:1234", "", "session", "routing", "", true},
+		{"unseen native overrides visible routing", "127.0.0.1:1234", "", "wsl-session", "session", "", false},
+		{"visible Magpie session only", "127.0.0.1:1234", "", "", "session", "", true},
+		{"unseen Magpie session only", "127.0.0.1:1234", "", "", "wsl-session", "", false},
+		{"keyed visible session", "127.0.0.1:1234", "key", "session", "", "", false},
+		{"title helper shares session", "127.0.0.1:1234", "", "session", "", "thread_title", false},
 	}
 	for i, tc := range cases {
 		req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"m1","messages":[{"role":"user","content":"hello"}]}`))
@@ -89,6 +128,7 @@ func TestOTelSessionDedupOnlyUnkeyedLoopback(t *testing.T) {
 		req.Header.Set("User-Agent", "pi/1.0")
 		req.Header.Set("X-Session-Id", tc.session)
 		req.Header.Set(SessionHeader, tc.override)
+		req.Header.Set("x-openai-subagent", tc.kind)
 		req.Header.Set("traceparent", fmt.Sprintf("00-%032x-%016x-01", i+1, i+1))
 		if tc.key != "" {
 			req = req.WithContext(access.WithIdentity(req.Context(), access.Identity{KeyID: tc.key}))
@@ -122,6 +162,9 @@ func TestOTelSessionDedupOnlyUnkeyedLoopback(t *testing.T) {
 			}
 		}
 	}
+	if counts[fmt.Sprintf("%032x", 999)] != 0 || counts[fmt.Sprintf("%032x", 998)] != 0 {
+		t.Fatal("header-only first request duplicated gateway trace")
+	}
 	for i, tc := range cases {
 		want := 2
 		if tc.dedup {
@@ -131,7 +174,7 @@ func TestOTelSessionDedupOnlyUnkeyedLoopback(t *testing.T) {
 			t.Fatalf("%s: spans=%d want=%d", tc.name, got, want)
 		}
 	}
-	if records := usage.Load(time.Time{}); len(records) != len(cases) {
+	if records := usage.Load(time.Time{}); len(records) != len(cases)+2 {
 		t.Fatalf("ledger lost requests: %d", len(records))
 	}
 }
@@ -582,5 +625,171 @@ func TestOTelWholeWaterfallFallback(t *testing.T) {
 		if span.ParentID != spans[2].SpanID {
 			t.Fatal("wrong waterfall parent")
 		}
+	}
+}
+
+func TestOTelClaudeHelperClassification(t *testing.T) {
+	for _, agent := range []string{"claude", "claude-desktop"} {
+		for _, tc := range []struct{ body, kind, want string }{
+			{`{"model":"claude-haiku","max_tokens":200,"messages":[]}`, "", "auxiliary"},
+			{`{"model":"claude-sonnet","max_tokens":4096,"tools":[]}`, "", "auxiliary"},
+			{`{"model":"claude-haiku","max_tokens":4096,"tools":[{"name":"Read"}]}`, "", ""},
+			{`{"max_tokens":8192}`, "", ""},
+			{`{"max_tokens":200}`, "title_generation", "title_generation"},
+			{`{broken`, "", ""},
+		} {
+			if got := otelCallKind(agent, tc.kind, []byte(tc.body)); got != tc.want {
+				t.Fatalf("%s %s: %q want %q", agent, tc.body, got, tc.want)
+			}
+		}
+	}
+	if got := otelCallKind("codex", "", []byte(`{"max_tokens":200}`)); got != "" {
+		t.Fatal("Claude heuristic applied to Codex")
+	}
+}
+
+func TestOTelClaudeMainAndChildDedupRetainsHelper(t *testing.T) {
+	for _, agent := range []string{"claude", "claude-desktop"} {
+		t.Run(agent, func(t *testing.T) {
+			upstream := &fake{ctype: "application/json", reply: `{"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5}}`}
+			setup(t, provider.Chat, upstream)
+			t.Setenv("CODEX_HOME", t.TempDir())
+			t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+			t.Setenv("PI_CODING_AGENT_DIR", t.TempDir())
+			t.Setenv("PI_CODING_AGENT_SESSION_DIR", "")
+			received := make(chan []byte, 16)
+			collector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				b, _ := io.ReadAll(r.Body)
+				received <- b
+				io.WriteString(w, `{}`)
+			}))
+			defer collector.Close()
+			t.Setenv("MAGPIE_OTEL_ENABLED", "true")
+			t.Setenv("MAGPIE_OTEL_ENDPOINT", collector.URL)
+			t.Setenv("MAGPIE_OTEL_HEADERS", "")
+			t.Setenv("MAGPIE_OTEL_SESSIONS", "true")
+			t.Setenv("MAGPIE_OTEL_METRICS", "false")
+			t.Setenv("MAGPIE_OTEL_BODIES", "false")
+			stop := usage.StartOTel()
+			t.Cleanup(stop)
+			root := filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), "projects", "p")
+			paths := []string{filepath.Join(root, "parent.jsonl"), filepath.Join(root, "parent", "subagents", "agent-a.jsonl")}
+			now := time.Now()
+			for _, path := range paths {
+				if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+					t.Fatal(err)
+				}
+				var transcript []byte
+				for _, event := range []map[string]any{
+					{"type": "user", "sessionId": "parent", "uuid": "user", "entrypoint": agent, "timestamp": now, "message": map[string]any{"content": "private"}},
+					{"type": "assistant", "timestamp": now.Add(time.Millisecond), "message": map[string]any{"id": "message", "model": "m1", "stop_reason": "end_turn", "content": []map[string]string{{"type": "text", "text": "answer"}}, "usage": map[string]int{"input_tokens": 10, "output_tokens": 5}}},
+					{"type": "system", "subtype": "turn_duration", "timestamp": now.Add(2 * time.Millisecond)},
+				} {
+					// Real child transcripts end at assistant/end_turn, without turn_duration.
+					if event["type"] == "system" && filepath.Base(filepath.Dir(path)) == "subagents" {
+						continue
+					}
+					b, err := json.Marshal(event)
+					if err != nil {
+						t.Fatal(err)
+					}
+					transcript = append(transcript, append(b, '\n')...)
+				}
+				if err := os.WriteFile(path, transcript, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			deadline := time.Now().Add(6 * time.Second)
+			for !usage.OTelSession(agent, "parent") && time.Now().Before(deadline) {
+				time.Sleep(10 * time.Millisecond)
+			}
+			if !usage.OTelSession(agent, "parent") {
+				t.Fatal("Claude transcript not available")
+			}
+			// Wait for the final child content blocks to settle and export. Readiness
+			// alone only proves the user/root event was observed, not final coverage.
+			var batches [][]byte
+			generations := 0
+			timer := time.NewTimer(8 * time.Second)
+			for generations < 2 {
+				select {
+				case batch := <-received:
+					batches = append(batches, batch)
+					generations += strings.Count(string(batch), `"key":"gen_ai.usage.input_tokens"`)
+				case <-timer.C:
+					t.Fatal("final child generation did not settle")
+				}
+			}
+			timer.Stop()
+			for _, batch := range batches {
+				received <- batch
+			}
+			// Main and child use the same native header; only the helper is absent
+			// from transcripts. Its requested tier can have been remapped already.
+			for i, body := range []string{
+				`{"model":"m1","max_tokens":8192,"messages":[{"role":"user","content":"main"}]}`,
+				`{"model":"m1","max_tokens":8192,"messages":[{"role":"user","content":"child"}]}`,
+				`{"model":"m1","max_tokens":200,"messages":[{"role":"user","content":"title"}]}`,
+			} {
+				req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
+				req.RemoteAddr = "127.0.0.1:1234"
+				req.Header.Set("Authorization", "Bearer "+TokenFor(agent))
+				req.Header.Set("x-claude-code-session-id", "parent")
+				req.Header.Set("traceparent", fmt.Sprintf("00-%032x-%016x-01", i+1, i+1))
+				reply := httptest.NewRecorder()
+				New().Handler().ServeHTTP(reply, req)
+				if reply.Code != 200 {
+					t.Fatalf("request %d: %d %s", i, reply.Code, reply.Body.String())
+				}
+			}
+			stop()
+			counts := map[string]int{}
+			tokens := 0
+			for len(received) > 0 {
+				var wire struct {
+					ResourceSpans []struct {
+						ScopeSpans []struct {
+							Spans []struct {
+								TraceID    string `json:"traceId"`
+								Attributes []struct {
+									Key   string
+									Value struct {
+										IntValue string `json:"intValue"`
+									}
+								}
+							}
+						}
+					}
+				}
+				if err := json.Unmarshal(<-received, &wire); err != nil {
+					t.Fatal(err)
+				}
+				for _, rs := range wire.ResourceSpans {
+					for _, ss := range rs.ScopeSpans {
+						for _, span := range ss.Spans {
+							counts[span.TraceID]++
+							for _, attr := range span.Attributes {
+								if attr.Key == "gen_ai.usage.input_tokens" {
+									var n int
+									if _, err := fmt.Sscanf(attr.Value.IntValue, "%d", &n); err != nil {
+										t.Fatal(err)
+									}
+									tokens += n
+								}
+							}
+						}
+					}
+				}
+			}
+			if counts[fmt.Sprintf("%032x", 1)] != 0 || counts[fmt.Sprintf("%032x", 2)] != 0 || counts[fmt.Sprintf("%032x", 3)] != 2 {
+				t.Fatalf("main/child/helper gateway coverage: %+v", counts)
+			}
+			if tokens != 30 {
+				t.Fatalf("main + child + helper tokens=%d want 30", tokens)
+			}
+			if got := len(usage.Load(time.Time{})); got != 3 {
+				t.Fatalf("usage ledger changed: %d", got)
+			}
+		})
 	}
 }

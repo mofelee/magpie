@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/yetone/magpie/internal/netproxy"
+	"github.com/yetone/magpie/internal/sessions"
 	"github.com/yetone/magpie/internal/settings"
 )
 
@@ -50,6 +51,7 @@ type otelExporter struct {
 	dropped    atomic.Uint64
 	bytes      atomic.Int64 // the queued records' bodies, in bytes
 	sessions   atomic.Pointer[sessionAvailability]
+	identities sessions.TraceSessionIndex
 }
 
 // StartOTel runs only in the process serving the gateway. Stopping drains
@@ -119,7 +121,7 @@ func offerOTel(r Record) {
 	if session == "" {
 		session = r.Session
 	}
-	if r.Local && r.CallerKeyID == "" && r.Via == "" && r.OTel == nil && e.sessionObserved(r.Agent, session, config) {
+	if r.Local && r.CallerKeyID == "" && r.Via == "" && r.OTel == nil && r.Kind == "" && e.sessionObserved(r.Agent, session, config) {
 		return
 	}
 	if !config.Bodies {

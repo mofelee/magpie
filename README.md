@@ -964,16 +964,38 @@ Tool execution inside the caller is outside the gateway's trace.
 Enable **Trace agent conversations** to instead export one trace per
 user interaction, grouping model calls and tool executions under an agent
 root. Conversation IDs group those traces into Langfuse sessions. Gateway traces
-remain available until a visible local store produces recent observations for
-that exact agent/session, and resume if those observations become stale (five minutes).
+remain available until a visible local store covers that exact agent/session.
+For Codex and Pi, a readable session header establishes readiness without
+waiting for a model/tool span. The first request checks a header bounded to
+256 KiB when needed (including Codex base instructions); subsequent polls keep
+idle sessions ready while their files remain among the reader's 200 newest main
+files. Claude children have a separate 200-file quota and share the same 8 MiB
+polling read budget. Header checks never upload history or bodies. Discovery is shared across
+request IDs for two seconds. The request that refreshes discovery waits for the
+scan; other unresolved concurrent requests retain gateway traces without waiting.
+Polling reuses headers by path, size and mtime.
+Other adapters still use recent observations (five minutes).
 Only loopback requests without a gateway key can be deduplicated. The native
 client session ID takes precedence over a Magpie routing override; unknown
 sessions retain gateway traces, including WSL mirrored and Docker Desktop
 clients whose sessions are not visible locally. Requests without a session ID
-fall back to recent observations for that agent, so such clients cannot be
-reliably distinguished on loopback. Keyed and non-loopback clients always
-retain gateway traces. Magpie reads
-new events from local session stores every two seconds; it does not upload
+fall back to recent observations for that agent.
+Claude Code/Cowork readers also follow `<session>/subagents/*.jsonl`. Child
+interactions share their parent session and use separate trace/span IDs, even
+when a user UUID is copied. Child final responses are combined across content
+blocks and exported when the transcript is unchanged for two seconds; no
+`turn_duration` is required.
+Their start times remain inferred; a parent tool link is not guessed. Main-thread calls can therefore be deduplicated. Claude
+tool-less small requests (`max_tokens` at most 4096), including title/haiku
+helpers, retain gateway traces because they may not enter a transcript. This
+conservative rule can retain a short tool-less main request as well. Explicitly
+classified auxiliary calls also retain gateway traces for other agents. This
+includes Codex calls with an explicit kind (subagent, review, memgen, title or
+compact): even if a child has a readable rollout, these can appear twice. Only
+its unclassified calls use local-session deduplication; a rollout alone does not
+prove every auxiliary request was recorded. Keyed and non-loopback clients
+always retain gateway traces. Magpie reads new events from local session stores
+every two seconds; it does not upload
 completed history when enabled. Restarting or changing the destination starts
 an observation window. Span IDs remain stable across repeated records.
 
@@ -987,7 +1009,7 @@ Supported clients and formats:
 | Codex | JSONL rollouts (`token_usage_record`, `item_completed`, `response_item`) | Recorded operations and paired native tools; inferred model/native-tool intervals |
 | Pi | Version-3 JSONL; optional `timing-final` | Recorded model times; inferred tool intervals |
 | Oh My Pi | Pi-compatible JSONL, including `model_usage` | Pi timing; auxiliary calls have inferred zero duration |
-| Claude Code / Cowork | `projects/*/*.jsonl`, repeated assistant blocks and paired tool results | Inferred model/tool starts; recorded transcript boundaries |
+| Claude Code / Cowork | `projects/*/*.jsonl` and `<session>/subagents/*.jsonl`, repeated assistant blocks and paired tool results | Inferred model/tool starts; recorded transcript boundaries |
 | OpenCode | SQLite V1/V2 (`message`/`part` or `session_message`); legacy JSON storage | Recorded model and tool timestamps |
 | Gemini CLI | `~/.gemini/tmp/*/chats/session-*.json[l]`, including patches and rewinds | Inferred intervals from message/tool event boundaries |
 

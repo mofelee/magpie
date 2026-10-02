@@ -3,6 +3,7 @@ package sessions
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -331,7 +332,7 @@ func TestClaudeTraceInterruptedToolDoesNotBlockNextInteraction(t *testing.T) {
 	}
 }
 
-func TestTraceDiscoveryIncludesMainStoresOnly(t *testing.T) {
+func TestTraceDiscoveryIncludesClaudeChildren(t *testing.T) {
 	home := t.TempDir()
 	data := filepath.Join(home, "data")
 	t.Setenv("HOME", home)
@@ -355,12 +356,18 @@ func TestTraceDiscoveryIncludesMainStoresOnly(t *testing.T) {
 		os.WriteFile(path, []byte("{}\n"), 0600)
 	}
 	got := traceLineFiles()
-	if len(got) != 3 {
+	if len(got) != 4 {
 		t.Fatalf("discovery %+v", got)
 	}
 	for _, f := range got {
+		if f.agent == "claude" && !f.main {
+			if sessionOfPath(f.path) != "s" {
+				t.Fatalf("child identity %+v", f)
+			}
+			continue
+		}
 		if f.path != files[f.agent] {
-			t.Fatalf("child discovered %+v", f)
+			t.Fatalf("unexpected child discovered %+v", f)
 		}
 	}
 }
@@ -370,5 +377,241 @@ func TestGeminiParallelToolResultsStayWithTheirCalls(t *testing.T) {
 	got := geminiTraceResult(raw, "one", "read")
 	if !strings.Contains(got, "first") || strings.Contains(got, "second") {
 		t.Fatalf("parallel results mixed: %s", got)
+	}
+}
+
+func TestClaudeTraceSubagentsShareSessionWithoutIDCollisions(t *testing.T) {
+	for _, agent := range []string{"claude", "claude-desktop"} {
+		t.Run(agent, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			t.Setenv("CODEX_HOME", t.TempDir())
+			t.Setenv("PI_CODING_AGENT_DIR", t.TempDir())
+			t.Setenv("PI_CODING_AGENT_SESSION_DIR", "")
+			t.Setenv("XDG_DATA_HOME", t.TempDir())
+			t.Setenv("GEMINI_CLI_HOME", t.TempDir())
+			t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+			t.Setenv("OPENCODE_DB", "")
+			since := time.Now().Add(-10 * time.Second)
+			root := filepath.Join(ClaudeDir(), "projects", "p")
+			paths := []string{filepath.Join(root, "parent.jsonl"), filepath.Join(root, "parent", "subagents", "agent-a.jsonl"), filepath.Join(root, "parent", "subagents", "agent-b.jsonl")}
+			for _, path := range paths {
+				if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+					t.Fatal(err)
+				}
+				// Both children deliberately repeat the parent's user/message UUIDs.
+				// No sessionId is required: child paths provide the parent session ID.
+				var lines []string
+				for _, event := range []map[string]any{
+					{"type": "user", "uuid": "old", "entrypoint": agent, "timestamp": since.Add(-time.Minute), "message": map[string]any{"content": "PRIVATE-OLD"}},
+					{"type": "user", "uuid": "same-user", "entrypoint": agent, "timestamp": since, "message": map[string]any{"content": "PRIVATE-NEW"}},
+					{"type": "assistant", "timestamp": since.Add(time.Second), "message": map[string]any{"id": "same-message", "model": "claude-sonnet", "stop_reason": "end_turn", "content": []map[string]string{{"type": "text", "text": "PRIVATE-ANSWER"}}, "usage": map[string]int{"input_tokens": 10, "output_tokens": 5}}},
+					{"type": "system", "subtype": "turn_duration", "timestamp": since.Add(2 * time.Second)},
+				} {
+					// Real child transcripts end at assistant/end_turn, without turn_duration.
+					if event["type"] == "system" && filepath.Base(filepath.Dir(path)) == "subagents" {
+						continue
+					}
+					b, err := json.Marshal(event)
+					if err != nil {
+						t.Fatal(err)
+					}
+					lines = append(lines, string(b))
+				}
+				if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			r := NewTraceReader(since)
+			spans := r.Poll(false)
+			for _, path := range paths {
+				settleClaudeTestFile(t, path)
+			}
+			r.Poll(false) // Observe the changed mtime before idle completion.
+			spans = append(spans, r.Poll(false)...)
+			_, models, _ := spanKinds(spans)
+			if len(models) != 3 {
+				t.Fatalf("child model coverage: %+v", spans)
+			}
+			ids := map[string]bool{}
+			traces := map[string]bool{}
+			for _, model := range models {
+				if model.Agent != agent || model.Session != "parent" || model.Tokens.Input != 10 || model.Tokens.Output != 5 || model.Input != "" || model.Output != "" {
+					t.Fatalf("child export: %+v", model)
+				}
+				if ids[model.ID] {
+					t.Fatalf("copied UUID collision: %s", model.ID)
+				}
+				ids[model.ID] = true
+				traces[TraceID(model.Agent, model.Session, model.Turn)] = true
+			}
+			if len(traces) != 3 {
+				t.Fatal("child trace collision")
+			}
+			if next := r.Poll(true); len(next) != 0 {
+				t.Fatalf("unchanged child replayed: %s", fmt.Sprint(next))
+			}
+		})
+	}
+}
+
+func TestClaudeSubagentEndTurnAfterToolResult(t *testing.T) {
+	for _, bodies := range []bool{false, true} {
+		t.Run(fmt.Sprint(bodies), func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			t.Setenv("CODEX_HOME", t.TempDir())
+			t.Setenv("PI_CODING_AGENT_DIR", t.TempDir())
+			t.Setenv("PI_CODING_AGENT_SESSION_DIR", "")
+			t.Setenv("XDG_DATA_HOME", t.TempDir())
+			t.Setenv("GEMINI_CLI_HOME", t.TempDir())
+			t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+			t.Setenv("OPENCODE_DB", "")
+			path := filepath.Join(ClaudeDir(), "projects", "p", "parent", "subagents", "agent-a.jsonl")
+			if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+				t.Fatal(err)
+			}
+			since := time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC)
+			initial := `{"type":"user","uuid":"user","timestamp":"2026-10-03T00:00:00Z","message":{"content":"PRIVATE-question"}}
+{"type":"assistant","timestamp":"2026-10-03T00:00:01Z","message":{"id":"m1","model":"claude-model","stop_reason":"tool_use","content":[{"type":"tool_use","id":"tool","name":"Read","input":{"path":"PRIVATE-path"}}],"usage":{"input_tokens":10,"output_tokens":3}}}
+`
+			if err := os.WriteFile(path, []byte(initial), 0600); err != nil {
+				t.Fatal(err)
+			}
+			r := NewTraceReader(since)
+			spans := r.Poll(bodies)
+			_, models, _ := spanKinds(spans)
+			if len(models) != 0 {
+				t.Fatal("tool-use model flushed before tool result")
+			}
+			final := `{"type":"user","timestamp":"2026-10-03T00:00:02Z","message":{"content":[{"type":"tool_result","tool_use_id":"tool","content":"PRIVATE-tool"}]}}
+{"type":"assistant","timestamp":"2026-10-03T00:00:03Z","message":{"id":"m2","model":"claude-model","stop_reason":"end_turn","content":[{"type":"text","text":"PRIVATE-answer"}],"usage":{"input_tokens":20,"output_tokens":7}}}
+`
+			h, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0600)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = h.WriteString(final)
+			closeErr := h.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if closeErr != nil {
+				t.Fatal(closeErr)
+			}
+			spans = append(spans, r.Poll(bodies)...)
+			settleClaudeTestFile(t, path)
+			spans = append(spans, r.Poll(bodies)...)
+			spans = append(spans, r.Poll(bodies)...)
+			roots, models, tools := spanKinds(spans)
+			if len(models) != 2 || len(tools) != 1 || len(roots) != 2 {
+				t.Fatalf("terminal child coverage: %+v", spans)
+			}
+			if models[0].Tokens.Input != 10 || models[1].Tokens.Input != 20 || models[1].Tokens.Output != 7 {
+				t.Fatalf("usage: %+v", models)
+			}
+			if roots[1].ID != roots[0].ID || !roots[1].End.Equal(since.Add(3*time.Second)) || models[1].Parent != roots[0].ID {
+				t.Fatalf("unclosed child interaction: %+v", roots)
+			}
+			if bodies && !strings.Contains(roots[1].Output, "PRIVATE-answer") {
+				t.Fatal("final answer missing")
+			}
+			for _, span := range spans {
+				if !bodies && (span.Input != "" || span.Output != "") {
+					t.Fatal("body consent bypassed")
+				}
+			}
+			if next := r.Poll(bodies); len(next) != 0 {
+				t.Fatalf("third poll duplicated final answer: %+v", next)
+			}
+			c := r.files[path]
+			if c == nil || c.claudeMessage != nil || !c.turns[c.current].completed {
+				t.Fatal("terminal child state left pending")
+			}
+		})
+	}
+}
+
+func settleClaudeTestFile(t *testing.T, path string) {
+	t.Helper()
+	old := time.Now().Add(-3 * time.Second)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestClaudeSubagentRepeatedEndTurnBlocks(t *testing.T) {
+	for _, bodies := range []bool{false, true} {
+		for _, split := range []bool{false, true} {
+			t.Run(fmt.Sprintf("bodies=%t/split=%t", bodies, split), func(t *testing.T) {
+				t.Setenv("HOME", t.TempDir())
+				t.Setenv("CODEX_HOME", t.TempDir())
+				t.Setenv("PI_CODING_AGENT_DIR", t.TempDir())
+				t.Setenv("PI_CODING_AGENT_SESSION_DIR", "")
+				t.Setenv("XDG_DATA_HOME", t.TempDir())
+				t.Setenv("GEMINI_CLI_HOME", t.TempDir())
+				t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+				t.Setenv("OPENCODE_DB", "")
+				path := filepath.Join(ClaudeDir(), "projects", "p", "parent", "subagents", "agent-a.jsonl")
+				if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+					t.Fatal(err)
+				}
+				user := `{"type":"user","uuid":"user","timestamp":"2026-10-03T00:00:00Z","message":{"content":"PRIVATE-question"}}` + "\n"
+				thinking := `{"type":"assistant","timestamp":"2026-10-03T00:00:01Z","message":{"id":"m","model":"claude-model","stop_reason":"end_turn","content":[{"type":"thinking","thinking":"PRIVATE-thinking"}],"usage":{"input_tokens":20,"output_tokens":7}}}` + "\n"
+				text := `{"type":"assistant","timestamp":"2026-10-03T00:00:02Z","message":{"id":"m","model":"claude-model","stop_reason":"end_turn","content":[{"type":"text","text":"PRIVATE-answer"}],"usage":{"input_tokens":20,"output_tokens":7}}}` + "\n"
+				initial := user + thinking
+				if !split {
+					initial += text
+				}
+				if err := os.WriteFile(path, []byte(initial), 0600); err != nil {
+					t.Fatal(err)
+				}
+				r := NewTraceReader(time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC))
+				spans := r.Poll(bodies)
+				if split {
+					h, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0600)
+					if err != nil {
+						t.Fatal(err)
+					}
+					_, err = h.WriteString(text)
+					closeErr := h.Close()
+					if err != nil {
+						t.Fatal(err)
+					}
+					if closeErr != nil {
+						t.Fatal(closeErr)
+					}
+					spans = append(spans, r.Poll(bodies)...)
+				}
+				_, pending, _ := spanKinds(spans)
+				if len(pending) != 0 {
+					t.Fatal("end_turn flushed before content blocks settled")
+				}
+				settleClaudeTestFile(t, path)
+				spans = append(spans, r.Poll(bodies)...)
+				spans = append(spans, r.Poll(bodies)...)
+				roots, models, _ := spanKinds(spans)
+				if len(models) != 1 || len(roots) != 2 {
+					t.Fatalf("duplicate terminal observations: %+v", spans)
+				}
+				if models[0].Tokens.Input != 20 || models[0].Tokens.Output != 7 {
+					t.Fatalf("usage counted incorrectly: %+v", models)
+				}
+				if bodies && (!strings.Contains(models[0].Output, "PRIVATE-thinking") || !strings.Contains(models[0].Output, "PRIVATE-answer") || roots[1].Output != models[0].Output) {
+					t.Fatal("split response content lost")
+				}
+				if !bodies {
+					for _, span := range spans {
+						if span.Input != "" || span.Output != "" {
+							t.Fatal("body consent bypassed")
+						}
+					}
+				}
+				if roots[0].ID != roots[1].ID || !roots[1].End.Equal(time.Date(2026, 10, 3, 0, 0, 2, 0, time.UTC)) {
+					t.Fatal("root not closed at final block")
+				}
+				if next := r.Poll(bodies); len(next) != 0 {
+					t.Fatal("settled response replayed")
+				}
+			})
+		}
 	}
 }

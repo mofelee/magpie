@@ -54,8 +54,21 @@ func otelSessionOf(h http.Header) string {
 	return sessionOf(h)
 }
 
-func beginOTelRequest(r *http.Request) (*http.Request, *otelRequest) {
-	if !usage.OTelEnabled() || local(r) && access.Caller(r.Context()).KeyID == "" && callerOf(r).via == "" && usage.OTelSession(agentOf(r), otelSessionOf(r.Header)) {
+// Claude's tool-less small tasks (titles, suggestions, haiku helpers) may
+// reuse the parent session but aren't recorded in its transcript. Keep their
+// gateway spans; a model name alone doesn't identify a helper or a subagent.
+func otelCallKind(agent, kind string, body []byte) string {
+	if kind == "" && (agent == "claude" || agent == "claude-desktop") && small(body) && !hasTools(body) {
+		return "auxiliary"
+	}
+	return kind
+}
+
+func beginOTelRequest(r *http.Request, kind string, body []byte) (*http.Request, *otelRequest) {
+	if !usage.OTelEnabled() {
+		return r, nil
+	}
+	if kind == "" && local(r) && access.Caller(r.Context()).KeyID == "" && callerOf(r).via == "" && usage.OTelSession(agentOf(r), otelSessionOf(r.Header)) && otelCallKind(agentOf(r), kind, body) == "" {
 		return r, nil
 	}
 	traceID, parentID := otelParent(r.Header.Get("traceparent"))

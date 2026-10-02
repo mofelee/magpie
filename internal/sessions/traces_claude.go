@@ -135,7 +135,10 @@ func (c *traceCursor) claude(line []byte, bodies bool) []TraceSpan {
 		// The next user prompt begins a new main interaction.
 		c.turns = map[string]*traceTurn{}
 		c.current = o.UUID
-		t := c.turn(o.UUID, o.Timestamp)
+		if c.scope != "" {
+			c.current = c.scope + "/" + c.current
+		}
+		t := c.turn(c.current, o.Timestamp)
 		if bodies {
 			t.input = string(o.Message.Content)
 		}
@@ -204,5 +207,8 @@ func (c *traceCursor) claude(line []byte, bodies bool) []TraceSpan {
 		c.tools[p.ID] = tool
 	}
 	t.last, t.failed = o.Timestamp, t.failed || m.span.Error
+	// Keep end_turn blocks pending too: thinking and text can each repeat
+	// the stop reason and usage for the same message. The next boundary or
+	// Poll's unchanged-file fallback exports the combined response once.
 	return out
 }

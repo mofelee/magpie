@@ -171,7 +171,7 @@ func TestSessionTracingSuppressesSupportedLocalClientsOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	ready := &sessionAvailability{config: cfg, agents: map[string]time.Time{}}
-	for _, agent := range []string{"codex", "pi", "omp", "claude", "claude-desktop", "opencode", "gemini"} {
+	for _, agent := range []string{"codex", "pi", "omp", "opencode", "gemini", "claude", "claude-desktop"} {
 		if OTelSessionAgent(agent) {
 			t.Fatal("unreadable store suppressed gateway")
 		}
@@ -300,5 +300,29 @@ func TestSessionTracingMatchesNativeConversation(t *testing.T) {
 	e.sessions.Store(&sessionAvailability{config: cfg, seen: map[observedSession]time.Time{{"codex", "local"}: now}})
 	if OTelSession("codex", "local") {
 		t.Fatal("session readiness survived changed config")
+	}
+}
+
+func TestSessionTracingRetainsUnrepresentedCalls(t *testing.T) {
+	otelConfig(t, settings.OTel{Endpoint: "http://localhost:4318"})
+	t.Setenv("MAGPIE_OTEL_SESSIONS", "true")
+	e := newOTelExporter()
+	previous := otel.Swap(e)
+	defer func() { otel.Store(previous); e.cancel() }()
+	cfg, err := settings.OTelExport()
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	e.sessions.Store(&sessionAvailability{config: cfg, agents: map[string]time.Time{"claude": now, "claude-desktop": now, "codex": now}, seen: map[observedSession]time.Time{{"claude", "parent"}: now, {"claude-desktop", "parent"}: now, {"codex", "parent"}: now}})
+	for _, tc := range []struct{ agent, kind string }{
+		{"claude", "title_generation"},
+		{"claude-desktop", "title_generation"}, {"codex", "thread_title"}, {"codex", "review"},
+	} {
+		offerOTel(Record{Agent: tc.agent, Kind: tc.kind, Session: "parent", Local: true, Time: now, Status: 200})
+		if len(e.queue) != 1 {
+			t.Fatalf("%s/%s unrepresented request lost", tc.agent, tc.kind)
+		}
+		<-e.queue
 	}
 }

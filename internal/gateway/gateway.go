@@ -962,7 +962,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 	call := Call{Time: start, From: from, Model: unprefixed(modelOf(body)), Agent: who.agent, Via: who.via, Kind: requestCallKind(r.Header, metadata),
 		RequestBody: requestBody, RequestTruncated: requestTruncated, otelIn: otelIn, wire: archiving(r, capture, start, body)}
 	defer discardArchive(capture)
-	r, telemetry := beginOTelRequest(r)
+	r, telemetry := beginOTelRequest(r, call.Kind, body)
 	defer func() { telemetry.end(call, time.Since(start).Milliseconds()) }()
 	if call.Kind == "web_search" {
 		call.For = searchFor(r.Context())

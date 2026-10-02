@@ -36,15 +36,23 @@ func OTelSession(agent, session string) bool {
 }
 
 func (e *otelExporter) sessionObserved(agent, session string, config settings.OTel) bool {
-	a := e.sessions.Load()
-	if !config.Enabled || !config.Sessions || a == nil || !reflect.DeepEqual(a.config, config) {
+	if !config.Enabled || !config.Sessions {
 		return false
 	}
-	at := a.agents[agent]
-	if session != "" {
-		at = a.seen[observedSession{agent, session}]
+	a := e.sessions.Load()
+	if a != nil && reflect.DeepEqual(a.config, config) {
+		at := a.agents[agent]
+		if session != "" {
+			at = a.seen[observedSession{agent, session}]
+		}
+		if time.Since(at) < 5*time.Minute {
+			return true
+		}
 	}
-	return time.Since(at) < 5*time.Minute
+	if session == "" {
+		return false
+	}
+	return e.identities.Visible(agent, session)
 }
 
 func sessionBody(body string, config settings.OTel) string {
@@ -82,6 +90,7 @@ func (e *otelExporter) watchSessions(ctx context.Context, started time.Time) {
 	var prior settings.OTel
 	if config, err := settings.OTelExport(); err == nil && config.Enabled && config.Sessions {
 		reader = sessions.NewTraceReader(started)
+		reader.SetSessionIndex(&e.identities)
 		prior = config
 	}
 	for {
@@ -98,6 +107,7 @@ func (e *otelExporter) watchSessions(ctx context.Context, started time.Time) {
 		}
 		if reader == nil || !reflect.DeepEqual(config, prior) {
 			reader = sessions.NewTraceReader(time.Now())
+			reader.SetSessionIndex(&e.identities)
 			prior = config
 			e.sessions.Store(nil)
 		}
@@ -114,6 +124,9 @@ func (e *otelExporter) watchSessions(ctx context.Context, started time.Time) {
 					available.seen[key] = at
 				}
 			}
+		}
+		for _, identity := range reader.VisibleSessions() {
+			available.seen[observedSession{identity.Agent, identity.ID}] = time.Now()
 		}
 		for _, s := range spans {
 			if s.End.After(available.agents[s.Agent]) {
