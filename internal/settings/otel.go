@@ -16,6 +16,8 @@ type OTel struct {
 	Endpoint string            `json:"endpoint,omitempty"`
 	Headers  map[string]string `json:"headers,omitempty"`
 	Metrics  bool              `json:"metrics,omitempty"`
+	// Sessions follows newly recorded local Codex and Pi interactions.
+	Sessions bool `json:"sessions,omitempty"`
 	// Bodies adds each call's request and reply, as the gateway captured
 	// them (secrets masked, cut at 256 KiB), to its span as Langfuse's
 	// observation input and output (#538); off, only metadata leaves
@@ -59,7 +61,7 @@ func OTelExport() (OTel, error) {
 	for _, x := range []struct {
 		name string
 		dst  *bool
-	}{{"MAGPIE_OTEL_ENABLED", &o.Enabled}, {"MAGPIE_OTEL_METRICS", &o.Metrics}, {"MAGPIE_OTEL_BODIES", &o.Bodies}, {"MAGPIE_OTEL_BODIES_WHOLE", &o.BodiesWhole}} {
+	}{{"MAGPIE_OTEL_ENABLED", &o.Enabled}, {"MAGPIE_OTEL_METRICS", &o.Metrics}, {"MAGPIE_OTEL_BODIES", &o.Bodies}, {"MAGPIE_OTEL_BODIES_WHOLE", &o.BodiesWhole}, {"MAGPIE_OTEL_SESSIONS", &o.Sessions}} {
 		if v, ok := os.LookupEnv(x.name); ok {
 			b, err := strconv.ParseBool(v)
 			if err != nil {

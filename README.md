@@ -935,6 +935,8 @@ MAGPIE_OTEL_ENABLED=true MAGPIE_OTEL_ENDPOINT=http://localhost:4318 magpie serve
 - `MAGPIE_OTEL_HEADERS`: comma-separated `name=value` pairs, for example
   `Authorization=Bearer%20token`. Percent-encode spaces and commas in values.
 - `MAGPIE_OTEL_METRICS`: `true` or `false`, off by default.
+- `MAGPIE_OTEL_SESSIONS`: `true` or `false`, off by default; trace supported local
+  agent interactions from newly recorded session events.
 - `MAGPIE_OTEL_BODIES`: `true` or `false`, off by default; sends each call's
   request and reply as the trace's Langfuse input and output.
 - `MAGPIE_OTEL_BODIES_WHOLE`: `true` or `false`, off by default; with bodies on,
@@ -943,16 +945,92 @@ MAGPIE_OTEL_ENABLED=true MAGPIE_OTEL_ENDPOINT=http://localhost:4318 magpie serve
 
 For Langfuse, use `https://<your-langfuse-host>/api/public/otel` as the base
 URL and `Authorization=Basic%20<base64(public-key:secret-key)>` as the header.
-Leave metrics off. This uses Langfuse's OTLP ingestion endpoint.
+Leave metrics off. This uses Langfuse's OTLP ingestion endpoint. For Langfuse
+v4, add the header `x-langfuse-ingestion-version=4` for real-time ingestion.
 
 Traces include agent, provider, model, token counts (including cache and
 reasoning), HTTP status, timing, and route ID. Attempts with the same route ID
-share a trace ID. Metrics group duration and input/output token histograms by
-agent, provider, model, operation and error status. Prompt/reply text, tool
-arguments, sessions and provider account names/keys are never exported —
-unless **Include request and response bodies** is on, which sends each call's
-request and reply (secrets masked) as the trace's input and output, whole when
-**Include the whole bodies** is on too.
+share a trace ID. Chat, Responses, Anthropic and Gemini gateway requests
+also export a parent request span and child spans for every routing attempt,
+including unbilled failures, retries and fallbacks, so Langfuse can render a
+waterfall. A valid incoming W3C version-00 `traceparent` connects these spans
+to the caller's trace. Attempt spans carry token usage; the parent does not
+duplicate it. Attempt timings include any wait for a concurrency slot, while
+routing and retry delays remain visible as gaps inside the parent span.
+Tool execution inside the caller is outside the gateway's trace.
+
+Enable **Trace agent conversations** to instead export one trace per
+user interaction, grouping model calls and tool executions under an agent
+root. Conversation IDs group those traces into Langfuse sessions. Gateway traces
+remain available until a visible local store produces recent observations for
+that exact agent/session, and resume if those observations become stale (five minutes).
+Only loopback requests without a gateway key can be deduplicated. The native
+client session ID takes precedence over a Magpie routing override; unknown
+sessions retain gateway traces, including WSL mirrored and Docker Desktop
+clients whose sessions are not visible locally. Requests without a session ID
+fall back to recent observations for that agent, so such clients cannot be
+reliably distinguished on loopback. Keyed and non-loopback clients always
+retain gateway traces. Magpie reads
+new events from local session stores every two seconds; it does not upload
+completed history when enabled. Restarting or changing the destination starts
+an observation window. Span IDs remain stable across repeated records.
+
+Pi and Codex have been tested end to end with real clients. The other adapters
+are covered by format fixtures but have **not been tested end to end**.
+
+Supported clients and formats:
+
+| Client | Local store | Timing |
+| --- | --- | --- |
+| Codex | JSONL rollouts (`token_usage_record`, `item_completed`, `response_item`) | Recorded operations and paired native tools; inferred model/native-tool intervals |
+| Pi | Version-3 JSONL; optional `timing-final` | Recorded model times; inferred tool intervals |
+| Oh My Pi | Pi-compatible JSONL, including `model_usage` | Pi timing; auxiliary calls have inferred zero duration |
+| Claude Code / Cowork | `projects/*/*.jsonl`, repeated assistant blocks and paired tool results | Inferred model/tool starts; recorded transcript boundaries |
+| OpenCode | SQLite V1/V2 (`message`/`part` or `session_message`); legacy JSON storage | Recorded model and tool timestamps |
+| Gemini CLI | `~/.gemini/tmp/*/chats/session-*.json[l]`, including patches and rewinds | Inferred intervals from message/tool event boundaries |
+
+The adapters follow upstream schemas:
+[OpenCode V1](https://github.com/anomalyco/opencode/blob/dev/packages/schema/src/v1/session.ts),
+[OpenCode V2](https://github.com/anomalyco/opencode/blob/dev/packages/schema/src/session-message.ts),
+[Gemini CLI](https://github.com/google-gemini/gemini-cli/blob/main/packages/core/src/services/chatRecordingTypes.ts),
+[Oh My Pi](https://github.com/can1357/oh-my-pi/blob/main/packages/coding-agent/src/session/session-manager.ts).
+Claude transcript records are checked against local Claude Code sessions;
+its [hook documentation](https://code.claude.com/docs/en/hooks) describes
+transcript locations. Separate subagent transcripts are not joined: the parent
+agent's task/delegation tool is included, but its children's internal work is
+not yet linked. No hooks or client changes are required.
+
+Polling uses a soft 8 MiB reading budget and up to 200 recent files per store.
+JSONL files are read incrementally; incomplete lines wait for the next poll.
+OpenCode SQLite is opened read-only, including WAL changes, and unchanged
+stores are skipped. SQLite message/part updates are read incrementally in bounded
+batches on separate read-only connections; oversized conversations resume on the
+next poll. OpenCode retains up to 256 messages and an 8 MiB body window per
+session; individual rows above 8 MiB export metadata only. Legacy JSON and
+Gemini snapshot reads cap at 32 MiB; Gemini retains the current prompt plus
+255 recent messages.
+Completed observations are deduplicated with bounded metadata. Claude's final
+response and Gemini's final token records may take one extra poll to settle.
+
+Inferred timings carry `magpie.timing.source=inferred`. Tool arguments/results
+and user input/output follow **Include request and response bodies**, masking
+secrets and respecting the whole-body preference. Session directory/title
+metadata, credentials and account names are not exported.
+
+Conversation tracing replaces standalone gateway traces for these local
+clients to avoid duplicate token usage. Unsupported clients and remote
+forwarded requests retain gateway tracing; the local usage ledger is unchanged.
+This mode shows agent activity rather than gateway retries or provider-routing
+details. It reads this computer's local sessions, including calls made without
+Magpie as the proxy.
+
+Metrics group duration and input/output token histograms by agent, provider,
+model, operation and error status. Prompt/reply text is exported only when
+**Include request and response bodies** is enabled (`MAGPIE_OTEL_BODIES=true`);
+secrets are masked and each body is limited to 256 KiB unless **Include the
+whole bodies** is enabled. Conversation IDs are exported only with
+conversation tracing; provider account names/keys are never exported.
+
 Whole bodies increase transient memory and allocation costs during read-back,
 secret scrubbing and JSON encoding; a 32 MiB request and reply can roughly
 double total allocations compared with truncated export. The export limits

@@ -90,8 +90,8 @@ type Record struct {
 	// the conversation: a Codex subagent's (review, compact, guardian…)
 	Kind string `json:"kind,omitempty"`
 	// Via is the computer whose magpie passed the call on to this one (a
-	// Remote magpie provider there), Agent being the agent's on it; "" for
-	// a call made on this computer
+	// Remote magpie provider there), Agent being the agent's on it; "" when
+	// no other magpie forwarded it (including direct LAN/container clients).
 	Via string `json:"via,omitempty"`
 	// Archive is where the request archive keeps the call, "<date>/<id>"
 	// (gateway/archive.go), when it was on: the Usage page reads it back
@@ -101,9 +101,16 @@ type Record struct {
 	// a call brought here by sync (#542); "" for one made here, as every
 	// call in usage.jsonl is
 	Computer string `json:"computer,omitempty"`
+	// OTel is transient trace context; SkipOTel avoids exporting ledger records
+	// when the gateway exports its attempts separately. Neither is persisted.
+	OTel     *OTelSpan `json:"-"`
+	SkipOTel bool      `json:"-"`
+	// Local is true only for verified loopback gateway requests. It is used
+	// for local-session deduplication, never persisted or exported.
+	Local bool `json:"-"`
 	// BodyIn and BodyOut are the request and reply as the gateway
 	// captured them, filled only for an OTLP export with bodies on (#538)
-	// and never written to usage.jsonl
+	// and never written to usage.jsonl.
 	BodyIn  string `json:"-"`
 	BodyOut string `json:"-"`
 }

@@ -957,6 +957,8 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 	call := Call{Time: start, From: from, Model: unprefixed(modelOf(body)), Agent: who.agent, Via: who.via, Kind: requestCallKind(r.Header, metadata),
 		RequestBody: requestBody, RequestTruncated: requestTruncated, otelIn: otelIn, wire: archiving(r, capture, start, body)}
 	defer discardArchive(capture)
+	r, telemetry := beginOTelRequest(r)
+	defer func() { telemetry.end(call, time.Since(start).Milliseconds()) }()
 	if call.Kind == "web_search" {
 		call.For = searchFor(r.Context())
 	}
@@ -1240,6 +1242,9 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		shown = nil // nobody else to stay away from
 	}
 	tr := s.trace.begin(Route{Pinned: pin, Time: start, Agent: call.Agent, Session: sessionOf(r.Header), ParentSession: titleParentSession(r.Header, metadata, call.Kind), Kind: call.Kind, For: call.For, Model: call.Model, Effort: requestEffort(from, body), Provider: p.ID, Group: group, Rule: hit, Nested: nested, Affinity: shown, Order: pl.order, Left: pl.left})
+	if telemetry != nil {
+		telemetry.routeID = tr.ID
+	}
 	var skipped []string
 	sent := ""       // the reasoning the last try's model was asked for
 	where := ""      // the last try's provider.Where, for the usage
@@ -1388,9 +1393,11 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 			// the agent went away: nobody failed, and nobody else is asked
 			call.Status, call.Error = 499, "the agent canceled the request"
 			try.Status, try.Error, try.Fail = call.Status, call.Error, failCanceled
+			telemetry.attempt(call, try, c.p.ID, sent, hw, capture)
 			s.trace.update(tr, func(t *Route) { t.Tries[len(t.Tries)-1] = try })
 			break
 		}
+		telemetry.attempt(call, try, c.p.ID, sent, hw, capture)
 		if resealed < 2 && from == provider.Responses && !hw.passing && hw.code() >= 400 && foreignReasoning.Match(hw.errBody()) {
 			// the conversation moved here from another account or vendor,
 			// whose sealed reasoning this one can't read: asked again

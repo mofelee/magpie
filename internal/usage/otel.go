@@ -49,6 +49,7 @@ type otelExporter struct {
 	last       time.Time
 	dropped    atomic.Uint64
 	bytes      atomic.Int64 // the queued records' bodies, in bytes
+	sessions   atomic.Pointer[sessionAvailability]
 }
 
 // StartOTel runs only in the process serving the gateway. Stopping drains
@@ -59,10 +60,13 @@ func StartOTel() func() {
 	if _, err := settings.OTelExport(); err != nil {
 		log.Printf("otel: %s", err)
 	}
+	watchCtx, stopWatch := context.WithCancel(e.ctx)
+	go e.watchSessions(watchCtx, time.Now())
 	go e.run()
 	var once sync.Once
 	return func() {
 		once.Do(func() {
+			stopWatch()
 			otel.CompareAndSwap(e, nil)
 			close(e.stop)
 			timer := time.NewTimer(3 * time.Second)
@@ -87,13 +91,35 @@ func newOTelExporter() *otelExporter {
 	return e
 }
 
+// ExportOTel queues telemetry without writing a usage ledger record.
+func ExportOTel(r Record) { offerOTel(r) }
+
+// OTelEnabled reports whether the running gateway exports traces.
+func OTelEnabled() bool {
+	if otel.Load() == nil {
+		return false
+	}
+	config, err := settings.OTelExport()
+	return err == nil && config.Enabled
+}
+
 func offerOTel(r Record) {
+	if r.SkipOTel {
+		return
+	}
 	e := otel.Load()
 	if e == nil {
 		return
 	}
 	config, err := settings.OTelExport()
 	if err != nil || !config.Enabled {
+		return
+	}
+	session := r.NativeSession
+	if session == "" {
+		session = r.Session
+	}
+	if r.Local && r.CallerKeyID == "" && r.Via == "" && r.OTel == nil && e.sessionObserved(r.Agent, session, config) {
 		return
 	}
 	if !config.Bodies {
@@ -234,7 +260,15 @@ func (e *otelExporter) flush(batch []otelItem) {
 		i = j
 	}
 	if config.Metrics {
-		e.send(config, "metrics", otelMetrics(records, e.last, now))
+		ledger := make([]Record, 0, len(records))
+		for _, r := range records {
+			if r.OTel == nil || !r.OTel.Root && !r.OTel.Update && (!r.OTel.Session || r.OTel.Type == "generation") {
+				ledger = append(ledger, r)
+			}
+		}
+		if len(ledger) > 0 {
+			e.send(config, "metrics", otelMetrics(ledger, e.last, now))
+		}
 	}
 	e.last = now
 }

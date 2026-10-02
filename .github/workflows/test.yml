@@ -51,7 +51,9 @@ jobs:
       # first-use races, so it must include the race detector.
       - name: Race
         if: runner.os != 'Windows'
-        run: go test -race -tags "${{ steps.tags.outputs.tags }}" ./internal/gateway/ ./internal/redact/
+        # The full gateway suite can exceed Go's default 10-minute package
+        # timeout under the race detector on hosted macOS runners.
+        run: go test -race -timeout 20m -tags "${{ steps.tags.outputs.tags }}" ./internal/gateway/ ./internal/redact/
 
       # Account usage mixes cached results with concurrent fetches.
       - name: Race account usage

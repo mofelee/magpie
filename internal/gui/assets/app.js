@@ -13076,6 +13076,8 @@ function renderOTel(s, keep) {
   row("otelHeadersRow", "OTLP headers", "Comma-separated name=value pairs; percent-encode spaces and commas in values", headers);
   row("otelMetricsRow", "Export metrics", "Also send duration and token histograms. Leave off for a traces-only service such as Langfuse",
     segs([["off", t("Off")], ["on", t("On")]], config.metrics ? "on" : "off", (v) => save({ metrics: v === "on" })));
+  row("otelSessionsRow", "Trace agent conversations", "Reads all local sessions from Codex, Pi, Oh My Pi, Claude Code, Cowork, OpenCode and Gemini CLI, including calls not routed through Magpie. With “Include request and response bodies” on, exports prompts, replies, tool arguments and tool output (including file contents and command output), with secrets masked",
+    segs([["off", t("Off")], ["on", t("On")]], config.sessions ? "on" : "off", (v) => save({ sessions: v === "on" })));
   row("otelBodiesRow", "Include request and response bodies", "Attach each call's request and reply to its trace, as Langfuse's input and output. Secrets are masked and each body is cut at 256 KB",
     segs([["off", t("Off")], ["on", t("On")]], config.bodies ? "on" : "off", (v) => save({ bodies: v === "on" })));
   if (config.bodies) row("otelWholeRow", "Include the whole bodies", "Keep each request and reply entire, not cut at 256 KB. A long reply is written to a temporary file, and a very large body may still be refused by the collector",

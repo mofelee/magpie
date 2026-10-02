@@ -68,6 +68,9 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         assert.equal(await page.locator("#otelExportRow .opt.on").textContent(), off);
         assert.equal(await page.locator("#otelMetricsRow .opt.on").textContent(), off);
         assert.equal(await page.locator("#otelBodiesRow .opt.on").textContent(), off);
+        assert.equal(await page.locator("#otelSessionsRow .opt.on").textContent(), off);
+		const consent = await page.locator("#otelSessionsRow").textContent();
+		for (const phrase of (lang === "zh" ? ["所有本地会话", "未通过 Magpie", "文件内容", "命令输出", "遮蔽敏感信息"] : ["all local sessions", "not routed through Magpie", "file contents", "command output", "secrets masked"])) assert(consent.includes(phrase), phrase);
         assert.equal(await page.locator("#otelWholeRow").count(), 0, "whole bodies require bodies on");
         assert((await page.locator("#otelBodiesRow").textContent()).includes(lang === "zh" ? "包含请求和响应内容" : "Include request and response bodies"));
         assert.equal(await page.locator("#otelHeadersRow input").getAttribute("type"), "password");
@@ -148,6 +151,13 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         p = await saved(() => page.locator("#otelBodiesRow .opt").nth(1).click(), 10);
         assert.equal(p.otel.bodies, true);
         assert.equal(await page.locator("#otelWholeRow .opt.on").textContent(), lang === "zh" ? "开启" : "On");
+        p = await saved(() => page.locator("#otelSessionsRow .opt").nth(1).click(), 11);
+        assert.equal(p.otel.sessions, true);
+        await page.reload();
+        await page.locator("#otelSessionsRow .opt.on").waitFor();
+        assert.equal(await page.locator("#otelSessionsRow .opt.on").textContent(), lang === "zh" ? "开启" : "On");
+        p = await saved(() => page.locator("#otelBodiesRow .opt").first().click(), 12);
+        assert.equal(p.otel.sessions, true, "body preferences preserve session tracing");
         assert.deepEqual(errors, []);
         await context.close();
       });

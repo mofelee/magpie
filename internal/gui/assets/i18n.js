@@ -215,6 +215,8 @@ const I18N = {
     "Use comma-separated name=value headers": "请使用以逗号分隔的 name=value 请求头",
     "Export metrics": "导出指标",
     "Also send duration and token histograms. Leave off for a traces-only service such as Langfuse": "同时发送耗时和 Token 直方图；Langfuse 等仅接收链路的服务请保持关闭",
+    "Trace agent conversations": "追踪代理对话",
+    "Reads all local sessions from Codex, Pi, Oh My Pi, Claude Code, Cowork, OpenCode and Gemini CLI, including calls not routed through Magpie. With “Include request and response bodies” on, exports prompts, replies, tool arguments and tool output (including file contents and command output), with secrets masked": "读取 Codex、Pi、Oh My Pi、Claude Code、Cowork、OpenCode 和 Gemini CLI 的所有本地会话，包括未通过 Magpie 的调用。开启「包含请求和响应内容」后，会导出提示词、回复、工具参数和工具输出（包括文件内容和命令输出），并遮蔽敏感信息",
     "Include request and response bodies": "包含请求和响应内容",
     "Attach each call's request and reply to its trace, as Langfuse's input and output. Secrets are masked and each body is cut at 256 KB": "把每次调用的请求和回复附到链路上，作为 Langfuse 的 Input 和 Output；密钥会脱敏，每份内容最多 256 KB",
     "Include the whole bodies": "包含完整内容",

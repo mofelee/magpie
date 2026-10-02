@@ -30,6 +30,8 @@ package agentenv
 var Vars = []string{
 	// Claude Code, Codex and Copilot CLI
 	"CLAUDE_CONFIG_DIR", "CODEX_HOME", "COPILOT_HOME",
+	// Gemini CLI's session/config home
+	"GEMINI_CLI_HOME",
 	// Cline: its folder, its data, its sessions and its MCP settings file
 	"CLINE_DIR", "CLINE_DATA_DIR", "CLINE_SESSION_DATA_DIR", "CLINE_MCP_SETTINGS_PATH",
 	// Pi and its forks (OmO, Senpi), whose profile and config are apart

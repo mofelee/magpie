@@ -53,18 +53,31 @@ func otelEnvelope(signal string, data any) map[string]any {
 	}}}
 }
 
+// OTelSpan carries explicit IDs for gateway requests and agent-session observations.
+type OTelSpan struct {
+	TraceID, SpanID, ParentID        string
+	Root                             bool
+	End                              time.Time
+	Name, Type, SessionID, TraceName string
+	Session, Inferred, Update        bool
+}
+
 func (e *otelExporter) traces(records []Record) any {
 	spans := make([]any, 0, len(records))
 	for _, r := range records {
 		var traceID [16]byte
-		if r.RouteID != 0 {
-			copy(traceID[:8], e.salt[:])
-			binary.BigEndian.PutUint64(traceID[8:], uint64(r.RouteID))
-		} else {
-			rand.Read(traceID[:])
+		if r.OTel == nil {
+			if r.RouteID != 0 {
+				copy(traceID[:8], e.salt[:])
+				binary.BigEndian.PutUint64(traceID[8:], uint64(r.RouteID))
+			} else {
+				rand.Read(traceID[:])
+			}
 		}
 		var spanID [8]byte
-		rand.Read(spanID[:])
+		if r.OTel == nil {
+			rand.Read(spanID[:])
+		}
 		a := append(otelAttributes(r), otelInt("http.response.status_code", int64(r.Status)),
 			otelInt("gen_ai.usage.input_tokens", int64(r.Input+r.CacheRead+r.CacheWrite)), otelInt("gen_ai.usage.output_tokens", int64(r.Output)),
 			otelInt("gen_ai.usage.cache_read.input_tokens", int64(r.CacheRead)), otelInt("gen_ai.usage.cache_creation.input_tokens", int64(r.CacheWrite)),
@@ -92,10 +105,65 @@ func (e *otelExporter) traces(records []Record) any {
 		if op == "" {
 			op = "chat"
 		}
-		spans = append(spans, map[string]any{"traceId": hex.EncodeToString(traceID[:]), "spanId": hex.EncodeToString(spanID[:]),
+		span := map[string]any{"traceId": hex.EncodeToString(traceID[:]), "spanId": hex.EncodeToString(spanID[:]),
 			"name": op + " " + r.Model, "kind": 3, "flags": 1,
 			"startTimeUnixNano": strconv.FormatInt(r.Time.UnixNano(), 10), "endTimeUnixNano": strconv.FormatInt(r.Time.Add(time.Duration(r.Millis)*time.Millisecond).UnixNano(), 10),
-			"attributes": a, "status": map[string]any{"code": status}})
+			"attributes": a, "status": map[string]any{"code": status}}
+		if r.OTel != nil {
+			span["traceId"], span["spanId"] = r.OTel.TraceID, r.OTel.SpanID
+			if !r.OTel.End.IsZero() {
+				span["endTimeUnixNano"] = strconv.FormatInt(r.OTel.End.UnixNano(), 10)
+			}
+			if r.OTel.ParentID != "" {
+				span["parentSpanId"] = r.OTel.ParentID
+			}
+			if r.OTel.Root {
+				span["name"], span["kind"] = "gateway "+r.Model, 2
+				a = []otelAttribute{otelString("magpie.agent", r.Agent), otelString("magpie.requested_model", r.Model), otelInt("http.response.status_code", int64(r.Status))}
+				if r.RouteID != 0 {
+					a = append(a, otelInt("magpie.route.id", r.RouteID))
+				}
+				if r.Status >= 400 {
+					a = append(a, otelString("error.type", strconv.Itoa(r.Status)))
+				}
+				a = append(a, otelString("langfuse.observation.type", "span"))
+			} else {
+				a = append(a, otelString("langfuse.observation.type", "generation"))
+			}
+			if r.OTel.Session {
+				span["name"], span["kind"] = r.OTel.Name, 1
+				if r.OTel.Type != "generation" {
+					a = []otelAttribute{otelString("magpie.agent", r.Agent)}
+					if r.Status >= 400 {
+						a = append(a, otelString("error.type", "agent_operation_failed"))
+					}
+				}
+				a = append(a, otelString("langfuse.session.id", r.OTel.SessionID), otelString("langfuse.trace.name", r.OTel.TraceName))
+				// Replace the gateway-specific observation type, keeping the wire allowlist explicit.
+				filtered := a[:0]
+				for _, attr := range a {
+					if attr.Key != "langfuse.observation.type" {
+						filtered = append(filtered, attr)
+					}
+				}
+				a = append(filtered, otelString("langfuse.observation.type", r.OTel.Type))
+				if r.OTel.Inferred {
+					a = append(a, otelString("magpie.timing.source", "inferred"))
+				} else {
+					a = append(a, otelString("magpie.timing.source", "recorded"))
+				}
+				if r.OTel.Type != "generation" {
+					if r.BodyIn != "" {
+						a = append(a, otelString("langfuse.observation.input", r.BodyIn))
+					}
+					if r.BodyOut != "" {
+						a = append(a, otelString("langfuse.observation.output", r.BodyOut))
+					}
+				}
+			}
+			span["attributes"] = a
+		}
+		spans = append(spans, span)
 	}
 	return otelEnvelope("Spans", spans)
 }

@@ -258,6 +258,10 @@ func accountOf(p provider.Provider) string {
 func appendUsage(r *http.Request, rec usage.Record) {
 	who := access.Caller(r.Context())
 	rec.CallerKeyID, rec.CallerKeyName = who.KeyID, who.KeyName
+	rec.Local = local(r)
+	if r.Context().Value(otelRequestKey{}) != nil {
+		rec.SkipOTel = true
+	}
 	budget.Append(rec)
 }
 
