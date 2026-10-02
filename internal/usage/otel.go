@@ -130,11 +130,16 @@ func recordBytes(r Record) int { return len(r.BodyIn) + len(r.BodyOut) }
 func (e *otelExporter) offer(item otelItem) {
 	n := int64(recordBytes(item.record))
 	if n > 0 {
-		if e.bytes.Load()+n > otelQueueBytes {
-			e.dropped.Add(1) // telemetry must never wait for a slow collector, nor grow without bound
-			return
+		for {
+			held := e.bytes.Load()
+			if n > otelQueueBytes-held {
+				e.dropped.Add(1) // telemetry must never wait for a slow collector, nor grow without bound
+				return
+			}
+			if e.bytes.CompareAndSwap(held, held+n) {
+				break
+			}
 		}
-		e.bytes.Add(n)
 	}
 	select {
 	case e.queue <- item:

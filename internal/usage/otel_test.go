@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -345,5 +346,31 @@ func TestOTelQueueBodiesBudget(t *testing.T) {
 	e.offer(otelItem{record: Record{BodyIn: "x"}})
 	if e.dropped.Load() != 1 {
 		t.Fatalf("dropped=%d, want 1", e.dropped.Load())
+	}
+}
+
+// Producers racing for the last bytes must reserve them atomically.
+func TestOTelQueueBodiesBudgetConcurrent(t *testing.T) {
+	body := strings.Repeat("x", 1<<10)
+	for range 100 {
+		e := newOTelExporter()
+		e.bytes.Store(otelQueueBytes - int64(len(body)))
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		for range 32 {
+			wg.Go(func() {
+				<-start
+				e.offer(otelItem{record: Record{BodyIn: body}})
+			})
+		}
+		close(start)
+		wg.Wait()
+		e.cancel()
+		if got := e.bytes.Load(); got != otelQueueBytes {
+			t.Fatalf("held %d bytes, want %d", got, otelQueueBytes)
+		}
+		if len(e.queue) != 1 || e.dropped.Load() != 31 {
+			t.Fatalf("queued=%d dropped=%d, want 1 and 31", len(e.queue), e.dropped.Load())
+		}
 	}
 }

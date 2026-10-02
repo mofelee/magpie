@@ -70,6 +70,8 @@ func (w *captureResponseWriter) Write(p []byte) (int, error) {
 // bytes; past that only its size is counted. A negative limit keeps every
 // byte (#538). A file that can't be written leaves what was kept so far, cut.
 type spool struct {
+	pattern string // empty uses the request archive
+
 	f           *os.File
 	limit, kept int64
 	size        int64 // every byte that came, kept or not
@@ -82,7 +84,11 @@ func (s *spool) add(p []byte) {
 		return
 	}
 	if s.f == nil {
-		f, err := os.CreateTemp("", "magpie-archive-*")
+		pattern := s.pattern
+		if pattern == "" {
+			pattern = "magpie-archive-*"
+		}
+		f, err := os.CreateTemp("", pattern)
 		if err != nil {
 			s.failed = true
 			return

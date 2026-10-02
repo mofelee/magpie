@@ -913,6 +913,11 @@ arguments, sessions and provider account names/keys are never exported —
 unless **Include request and response bodies** is on, which sends each call's
 request and reply (secrets masked) as the trace's input and output, whole when
 **Include the whole bodies** is on too.
+Whole bodies increase transient memory and allocation costs during read-back,
+secret scrubbing and JSON encoding; a 32 MiB request and reply can roughly
+double total allocations compared with truncated export. The export limits
+queued bodies to 128 MiB, but this does not bound in-flight processing memory.
+Recent calls retain only the first 256 KiB of each body.
 
 Export runs in the background with a bounded queue (128 records) and batches
 of up to 32 records, flushed every five seconds. A full queue drops telemetry

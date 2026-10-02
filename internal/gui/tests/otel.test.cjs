@@ -68,7 +68,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         assert.equal(await page.locator("#otelExportRow .opt.on").textContent(), off);
         assert.equal(await page.locator("#otelMetricsRow .opt.on").textContent(), off);
         assert.equal(await page.locator("#otelBodiesRow .opt.on").textContent(), off);
-        assert.equal(await page.locator("#otelWholeRow .opt.on").textContent(), off);
+        assert.equal(await page.locator("#otelWholeRow").count(), 0, "whole bodies require bodies on");
         assert((await page.locator("#otelBodiesRow").textContent()).includes(lang === "zh" ? "包含请求和响应内容" : "Include request and response bodies"));
         assert.equal(await page.locator("#otelHeadersRow input").getAttribute("type"), "password");
         assert((await page.locator("#otelList").textContent()).includes(lang === "zh" ? "环境变量" : "Environment variables"));
@@ -103,6 +103,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         assert.equal(p.otel.metrics, true);
         p = await saved(() => page.locator("#otelBodiesRow .opt").nth(1).click(), 5);
         assert.equal(p.otel.bodies, true);
+        assert.equal(await page.locator("#otelWholeRow .opt.on").textContent(), off);
         assert.equal(p.otel.metrics, true);
         assert.equal(await scroll(), before, "saving OTLP settings must not scroll");
         for (let i = 0; i < 40; i++) {
@@ -140,6 +141,13 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         assert.equal(await page.locator("#otelExportRow .opt.on").textContent(), off);
         assert.equal(await page.locator("#otelWholeRow .opt.on").textContent(), lang === "zh" ? "开启" : "On");
         assert.equal(await page.locator("#otelEndpointRow input").inputValue(), p.otel.endpoint);
+        p = await saved(() => page.locator("#otelBodiesRow .opt").first().click(), 9);
+        assert.equal(p.otel.bodies, false);
+        assert.equal(p.otel.bodiesWhole, true, "hiding the row preserves the preference");
+        assert.equal(await page.locator("#otelWholeRow").count(), 0);
+        p = await saved(() => page.locator("#otelBodiesRow .opt").nth(1).click(), 10);
+        assert.equal(p.otel.bodies, true);
+        assert.equal(await page.locator("#otelWholeRow .opt.on").textContent(), lang === "zh" ? "开启" : "On");
         assert.deepEqual(errors, []);
         await context.close();
       });

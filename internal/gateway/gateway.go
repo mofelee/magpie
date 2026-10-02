@@ -303,6 +303,9 @@ func (s *Server) Recent() []Call {
 }
 
 func (s *Server) record(c Call) {
+	// Whole bodies belong only to the export, never to the Recent-calls ring.
+	// This is a copy: the serving call still needs them for withBodies.
+	c.otelIn, c.otelOut = nil, nil
 	if c.wire != nil {
 		c.Archive = c.wire.name
 		archive(c)
@@ -891,7 +894,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 	}
 	capture := &captureResponseWriter{ResponseWriter: w}
 	if wholeBodies {
-		capture.otel = &spool{limit: wholeBodyLimit}
+		capture.otel = &spool{limit: wholeBodyLimit, pattern: "magpie-otel-*"}
 	}
 	w = capture
 	// the agent it is recorded as, the one on the computer it was passed

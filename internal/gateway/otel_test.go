@@ -164,8 +164,21 @@ func TestOTelExportsWholeBodiesWhenOn(t *testing.T) {
 			t.Setenv("MAGPIE_OTEL_BODIES_WHOLE", fmt.Sprintf("%t", c.whole))
 			stop := usage.StartOTel()
 			t.Cleanup(stop)
-			if code, body := post(t, "/v1/chat/completions", request); code != 200 || !strings.Contains(body, big) {
-				t.Fatalf("gateway: %d", code)
+			s := New()
+			response := httptest.NewRecorder()
+			s.Handler().ServeHTTP(response, httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(request)))
+			if response.Code != 200 || !strings.Contains(response.Body.String(), big) {
+				t.Fatalf("gateway: %d", response.Code)
+			}
+			recent := s.Recent()
+			if len(recent) != 1 {
+				t.Fatalf("recent calls: %d, want 1", len(recent))
+			}
+			if recent[0].otelIn != nil || recent[0].otelOut != nil {
+				t.Fatal("Recent calls retained whole OTel bodies")
+			}
+			if len(recent[0].RequestBody) != callBodyLimit || len(recent[0].ResponseBody) != callBodyLimit || !recent[0].RequestTruncated || !recent[0].ResponseTruncated {
+				t.Fatal("Recent calls must retain only the truncated diagnostic bodies")
 			}
 			stop()
 			var exported string
