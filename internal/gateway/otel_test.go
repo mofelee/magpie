@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -128,4 +129,90 @@ func TestOTelExportsBodiesWhenOn(t *testing.T) {
 			}
 		})
 	}
+}
+
+// with bodies whole (#538) the export carries the request and reply entire,
+// not the 256 KiB the Recent-calls page keeps, and no cut mark; with it off
+// the first 256 KiB of each goes, cut, as before
+func TestOTelExportsWholeBodiesWhenOn(t *testing.T) {
+	big := strings.Repeat("A", 300<<10)
+	reply := `{"id":"c1","model":"m1","choices":[{"message":{"role":"assistant","content":"` + big + `"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5}}`
+	request := `{"model":"m1","messages":[{"role":"user","content":"` + big + `"}]}`
+	for _, c := range []struct {
+		name  string
+		whole bool
+		cut   bool
+	}{
+		{"cut", false, true},
+		{"whole", true, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := &fake{ctype: "application/json", reply: reply}
+			setup(t, provider.Chat, f)
+			received := make(chan string, 1)
+			collector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				b, _ := io.ReadAll(r.Body)
+				received <- string(b)
+				io.WriteString(w, `{}`)
+			}))
+			defer collector.Close()
+			t.Setenv("MAGPIE_OTEL_ENABLED", "true")
+			t.Setenv("MAGPIE_OTEL_ENDPOINT", collector.URL)
+			t.Setenv("MAGPIE_OTEL_HEADERS", "")
+			t.Setenv("MAGPIE_OTEL_METRICS", "false")
+			t.Setenv("MAGPIE_OTEL_BODIES", "true")
+			t.Setenv("MAGPIE_OTEL_BODIES_WHOLE", fmt.Sprintf("%t", c.whole))
+			stop := usage.StartOTel()
+			t.Cleanup(stop)
+			if code, body := post(t, "/v1/chat/completions", request); code != 200 || !strings.Contains(body, big) {
+				t.Fatalf("gateway: %d", code)
+			}
+			stop()
+			var exported string
+			select {
+			case exported = <-received:
+			case <-time.After(3 * time.Second):
+				t.Fatal("gateway usage was not exported")
+			}
+			attrs := otelSpanAttrs(t, exported)
+			in, out := attrs["langfuse.observation.input"], attrs["langfuse.observation.output"]
+			if c.cut {
+				if !strings.Contains(in, usage.BodyCut) || !strings.Contains(out, usage.BodyCut) {
+					t.Fatalf("expected cut bodies, got in=%d out=%d", len(in), len(out))
+				}
+				return
+			}
+			if strings.Contains(in, usage.BodyCut) || strings.Contains(out, usage.BodyCut) {
+				t.Fatalf("whole bodies were cut")
+			}
+			if len(in) < len(big) || len(out) < len(big) {
+				t.Fatalf("short bodies: in=%d out=%d want at least %d", len(in), len(out), len(big))
+			}
+		})
+	}
+}
+
+// otelSpanAttrs is the first span's string attributes in one exported batch.
+func otelSpanAttrs(t *testing.T, exported string) map[string]string {
+	t.Helper()
+	var wire struct {
+		ResourceSpans []struct {
+			ScopeSpans []struct {
+				Spans []struct {
+					Attributes []struct {
+						Key   string            `json:"key"`
+						Value map[string]string `json:"value"`
+					} `json:"attributes"`
+				} `json:"spans"`
+			} `json:"scopeSpans"`
+		} `json:"resourceSpans"`
+	}
+	if err := json.Unmarshal([]byte(exported), &wire); err != nil {
+		t.Fatal(err)
+	}
+	attrs := map[string]string{}
+	for _, a := range wire.ResourceSpans[0].ScopeSpans[0].Spans[0].Attributes {
+		attrs[a.Key] = a.Value["stringValue"]
+	}
+	return attrs
 }

@@ -68,6 +68,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         assert.equal(await page.locator("#otelExportRow .opt.on").textContent(), off);
         assert.equal(await page.locator("#otelMetricsRow .opt.on").textContent(), off);
         assert.equal(await page.locator("#otelBodiesRow .opt.on").textContent(), off);
+        assert.equal(await page.locator("#otelWholeRow .opt.on").textContent(), off);
         assert((await page.locator("#otelBodiesRow").textContent()).includes(lang === "zh" ? "包含请求和响应内容" : "Include request and response bodies"));
         assert.equal(await page.locator("#otelHeadersRow input").getAttribute("type"), "password");
         assert((await page.locator("#otelList").textContent()).includes(lang === "zh" ? "环境变量" : "Environment variables"));
@@ -104,15 +105,26 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         assert.equal(p.otel.bodies, true);
         assert.equal(p.otel.metrics, true);
         assert.equal(await scroll(), before, "saving OTLP settings must not scroll");
+        for (let i = 0; i < 40; i++) {
+          const box = await page.locator("#otelWholeRow").boundingBox();
+          if (box && box.y > 100 && box.y + box.height < 750) break;
+          await page.mouse.wheel(0, 100); await page.waitForTimeout(30);
+        }
+        const beforeWhole = await scroll();
+        p = await saved(() => page.locator("#otelWholeRow .opt").nth(1).click(), 6);
+        assert.equal(p.otel.bodiesWhole, true);
+        assert.equal(p.otel.bodies, true);
+        assert.equal(await scroll(), beforeWhole, "saving the whole-bodies switch must not scroll");
         await page.locator("#setTab-usage").click();
         for (let i = 0; i < 60; i++) {
           const box = await page.locator("#currencySegs").boundingBox();
           if (box && box.y > 100 && box.y < 750) break;
           await page.mouse.wheel(0, -150); await page.waitForTimeout(30);
         }
-        p = await saved(() => page.locator("#currencySegs .opt").nth(1).click(), 6);
+        p = await saved(() => page.locator("#currencySegs .opt").nth(1).click(), 7);
         assert.equal(p.otel.enabled, true);
         assert.equal(p.otel.bodies, true);
+        assert.equal(p.otel.bodiesWhole, true);
         assert.equal(p.otel.endpoint, "https://collector.test/api/public/otel");
         assert.equal(p.otel.headers.Authorization, "Basic YWJjZA==");
         await page.locator("#setTab-otel").click();
@@ -121,11 +133,12 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
           if (box && box.y > 100 && box.y < 650) break;
           await page.mouse.wheel(0, 150); await page.waitForTimeout(30);
         }
-        p = await saved(() => page.locator("#otelExportRow .opt").first().click(), 7);
+        p = await saved(() => page.locator("#otelExportRow .opt").first().click(), 8);
         assert.equal(p.otel.enabled, false);
         await page.reload();
         await page.locator("#otelExportRow .opt.on").waitFor();
         assert.equal(await page.locator("#otelExportRow .opt.on").textContent(), off);
+        assert.equal(await page.locator("#otelWholeRow .opt.on").textContent(), lang === "zh" ? "开启" : "On");
         assert.equal(await page.locator("#otelEndpointRow input").inputValue(), p.otel.endpoint);
         assert.deepEqual(errors, []);
         await context.close();

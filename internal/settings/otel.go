@@ -20,6 +20,11 @@ type OTel struct {
 	// them (secrets masked, cut at 256 KiB), to its span as Langfuse's
 	// observation input and output (#538); off, only metadata leaves
 	Bodies bool `json:"bodies,omitempty"`
+	// BodiesWhole keeps those bodies entire, not cut at 256 KiB: the reply
+	// is written to a temporary file as it streams and read back for the
+	// export, so a long prompt or reply reaches the trace whole. Only
+	// meaningful with Bodies on
+	BodiesWhole bool `json:"bodiesWhole,omitempty"`
 }
 
 var otelHeaderName = regexp.MustCompile("^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
@@ -54,7 +59,7 @@ func OTelExport() (OTel, error) {
 	for _, x := range []struct {
 		name string
 		dst  *bool
-	}{{"MAGPIE_OTEL_ENABLED", &o.Enabled}, {"MAGPIE_OTEL_METRICS", &o.Metrics}, {"MAGPIE_OTEL_BODIES", &o.Bodies}} {
+	}{{"MAGPIE_OTEL_ENABLED", &o.Enabled}, {"MAGPIE_OTEL_METRICS", &o.Metrics}, {"MAGPIE_OTEL_BODIES", &o.Bodies}, {"MAGPIE_OTEL_BODIES_WHOLE", &o.BodiesWhole}} {
 		if v, ok := os.LookupEnv(x.name); ok {
 			b, err := strconv.ParseBool(v)
 			if err != nil {

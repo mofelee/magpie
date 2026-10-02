@@ -330,3 +330,20 @@ func TestOTelReplyText(t *testing.T) {
 		}
 	}
 }
+
+// whole bodies (#538) are held by the queue within a byte budget, not by
+// record count alone: one past it is dropped as a full queue's is
+func TestOTelQueueBodiesBudget(t *testing.T) {
+	e := newOTelExporter()
+	defer e.cancel()
+	body := strings.Repeat("x", otelQueueBytes/2)
+	e.offer(otelItem{record: Record{BodyIn: body}})
+	e.offer(otelItem{record: Record{BodyIn: body}})
+	if got := e.bytes.Load(); got != int64(otelQueueBytes) {
+		t.Fatalf("held %d bytes, want %d", got, otelQueueBytes)
+	}
+	e.offer(otelItem{record: Record{BodyIn: "x"}})
+	if e.dropped.Load() != 1 {
+		t.Fatalf("dropped=%d, want 1", e.dropped.Load())
+	}
+}

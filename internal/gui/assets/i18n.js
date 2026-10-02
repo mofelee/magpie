@@ -184,6 +184,8 @@ const I18N = {
     "Also send duration and token histograms. Leave off for a traces-only service such as Langfuse": "同时发送耗时和 Token 直方图；Langfuse 等仅接收链路的服务请保持关闭",
     "Include request and response bodies": "包含请求和响应内容",
     "Attach each call's request and reply to its trace, as Langfuse's input and output. Secrets are masked and each body is cut at 256 KB": "把每次调用的请求和回复附到链路上，作为 Langfuse 的 Input 和 Output；密钥会脱敏，每份内容最多 256 KB",
+    "Include the whole bodies": "包含完整内容",
+    "Keep each request and reply entire, not cut at 256 KB. A long reply is written to a temporary file, and a very large body may still be refused by the collector": "把每次调用的请求和回复完整记录，不再截断到 256 KB；较长的回复会写入临时文件，内容过大时采集服务仍可能拒绝",
     "Environment variables override these saved OTLP preferences": "环境变量会覆盖这里保存的 OTLP 设置",
     "Privacy": "隐私",
     "Mask secrets": "脱敏密钥",

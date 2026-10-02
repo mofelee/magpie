@@ -241,6 +241,11 @@ type Call struct {
 	// when it was on (archive.go); wire what it keeps besides
 	Archive string `json:"archive,omitempty"`
 	wire    *wire
+	// otelIn/otelOut are the whole bodies for the OTLP export when it asks
+	// for them uncut (#538): nil leaves it to the 256 KiB bodies above,
+	// which is all the Recent-calls page keeps
+	otelIn, otelOut       []byte
+	otelInCut, otelOutCut bool
 }
 
 // Server is the gateway.
@@ -870,6 +875,14 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 	w, body, unmask := redacted(w, body)
 	defer unmask()
 	requestBody, requestTruncated := captureRequestBody(body)
+	// the OTLP export may want the bodies uncut (#538): the request is
+	// already whole in memory, so keep it as it came, and the reply goes to
+	// a spool as it streams
+	wholeBodies := usage.OTelWhole()
+	var otelIn []byte
+	if wholeBodies {
+		otelIn = body
+	}
 	// a model asked for at an effort of its own (a Claude Code tier, #536)
 	// is the model, every try of it asked for that effort
 	asked, askedEffort := askedAt(modelOf(body))
@@ -877,6 +890,9 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		body = rewriteModel(body, asked)
 	}
 	capture := &captureResponseWriter{ResponseWriter: w}
+	if wholeBodies {
+		capture.otel = &spool{limit: wholeBodyLimit}
+	}
 	w = capture
 	// the agent it is recorded as, the one on the computer it was passed
 	// on from for a remote magpie's request; agent the one that sent it,
@@ -884,7 +900,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 	who, agent := callerOf(r), agentOf(r)
 	metadata := requestSessionMetadata(r.Header, body)
 	call := Call{Time: start, From: from, Model: unprefixed(modelOf(body)), Agent: who.agent, Via: who.via, Kind: requestCallKind(r.Header, metadata),
-		RequestBody: requestBody, RequestTruncated: requestTruncated, wire: archiving(r, capture, start, body)}
+		RequestBody: requestBody, RequestTruncated: requestTruncated, otelIn: otelIn, wire: archiving(r, capture, start, body)}
 	defer discardArchive(capture)
 	if call.Kind == "web_search" {
 		call.For = searchFor(r.Context())
@@ -893,6 +909,12 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 	finishCapture := func() {
 		call.ResponseBody = capture.body.text()
 		call.ResponseTruncated = capture.body.truncated
+		if capture.otel != nil {
+			call.otelOutCut = capture.otel.cut()
+			if b, err := capture.otel.read(); err == nil {
+				call.otelOut = b
+			}
+		}
 	}
 	// a request turned away before any provider was asked is in the log
 	// as the failure it was, with the reason
@@ -1361,7 +1383,11 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 				failedWith(&rec, call.Status, call.Error, call.Usage.ErrType)
 				// what this account answered is its refusal, the reply
 				// captured so far being no one's yet
-				withBodies(&rec, &Call{RequestBody: call.RequestBody, RequestTruncated: call.RequestTruncated, ResponseBody: string(hw.errBody())})
+				refusal := &Call{RequestBody: call.RequestBody, RequestTruncated: call.RequestTruncated, ResponseBody: string(hw.errBody())}
+				if call.otelIn != nil {
+					refusal.otelIn, refusal.otelOut = call.otelIn, hw.errBody()
+				}
+				withBodies(&rec, refusal)
 				appendUsage(r, rec)
 			}
 			continue

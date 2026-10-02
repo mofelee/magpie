@@ -895,6 +895,11 @@ MAGPIE_OTEL_ENABLED=true MAGPIE_OTEL_ENDPOINT=http://localhost:4318 magpie serve
 - `MAGPIE_OTEL_HEADERS`: comma-separated `name=value` pairs, for example
   `Authorization=Bearer%20token`. Percent-encode spaces and commas in values.
 - `MAGPIE_OTEL_METRICS`: `true` or `false`, off by default.
+- `MAGPIE_OTEL_BODIES`: `true` or `false`, off by default; sends each call's
+  request and reply as the trace's Langfuse input and output.
+- `MAGPIE_OTEL_BODIES_WHOLE`: `true` or `false`, off by default; with bodies on,
+  keeps them entire rather than cut at 256 KB. A long reply is written to a
+  temporary file; a body too large for the collector is still refused.
 
 For Langfuse, use `https://<your-langfuse-host>/api/public/otel` as the base
 URL and `Authorization=Basic%20<base64(public-key:secret-key)>` as the header.
@@ -904,7 +909,10 @@ Traces include agent, provider, model, token counts (including cache and
 reasoning), HTTP status, timing, and route ID. Attempts with the same route ID
 share a trace ID. Metrics group duration and input/output token histograms by
 agent, provider, model, operation and error status. Prompt/reply text, tool
-arguments, sessions and provider account names/keys are never exported.
+arguments, sessions and provider account names/keys are never exported —
+unless **Include request and response bodies** is on, which sends each call's
+request and reply (secrets masked) as the trace's input and output, whole when
+**Include the whole bodies** is on too.
 
 Export runs in the background with a bounded queue (128 records) and batches
 of up to 32 records, flushed every five seconds. A full queue drops telemetry
