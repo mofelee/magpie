@@ -1,0 +1,69 @@
+{
+  "summary": "这次 diff 里只有两处真正落到界面上：路由页的帧循环不再在页面隐藏时继续调度（切到别的标签、窗口被盖住时停下，重新显示/聚焦时恢复），以及「用量」页与面板「用量」标签的刷新被串行化——同一时刻只有一个请求，期间的周期切换、供应方选择和「立即刷新」会被排队并在这次读完后补上。其余改动（网关请求体积与队列上限、用量索引与摘要缓存、插件刷新超时重试）都在后端，界面本身没有新增元素。",
+  "scenes": [
+    {
+      "title": "路由页隐藏与恢复",
+      "shots": [
+        {
+          "file": "01-routing-live.png",
+          "caption": "路由页打开着：实时路由与最近请求",
+          "width": 2560
+        },
+        {
+          "file": "02-routing-hidden.png",
+          "caption": "选中「Agent」时的页面",
+          "width": 2560
+        },
+        {
+          "file": "03-routing-resumed.png",
+          "caption": "切回「路由」后的页面",
+          "width": 2560
+        }
+      ]
+    },
+    {
+      "title": "用量页的刷新",
+      "shots": [
+        {
+          "file": "04-usage-overview.png",
+          "caption": "用量 · 概览，今天的数据",
+          "width": 2560
+        },
+        {
+          "file": "05-usage-refreshing.png",
+          "caption": "点下「立即刷新」之后的用量页",
+          "width": 2560
+        },
+        {
+          "file": "06-usage-seven-days.png",
+          "caption": "选「7 天」后的用量页",
+          "width": 2560
+        }
+      ]
+    },
+    {
+      "title": "面板里的用量标签",
+      "shots": [
+        {
+          "file": "07-panel-usage.png",
+          "caption": "面板「用量」标签读到的数据",
+          "width": 2560
+        },
+        {
+          "file": "08-panel-usage-7d.png",
+          "caption": "面板改选「7 天」之后",
+          "width": 2560
+        }
+      ]
+    }
+  ],
+  "video": "preview.mp4",
+  "poster": "poster.png",
+  "errors": [],
+  "leak": false,
+  "skipped": null,
+  "mismatch": "",
+  "unseen": "路由页「隐藏时不再请求帧、切回时恢复」和用量刷新「只发一个请求、排队补读」本身都不会在任何一张静止截图里显现，只能看到来回切换后页面照常绘制；网关 128 MiB 体积上限、503 + Retry-After 过载、插件刷新 30 秒超时与冷却也需要超大请求或卡住的插件宿主才能触发，沙盒里看不到。",
+  "interactive": true,
+  "pages": 5
+}

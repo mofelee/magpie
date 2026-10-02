@@ -1,0 +1,36 @@
+{
+  "summary": "这个 diff 让 Copilot 的账号标签带上套餐（如 GitHub Education、GitHub Pro+），把 Copilot 的无限额度在卡片上显示为「无限」，并在订阅供应商的套餐说明里列出 Free · Education · Pro · Pro+ · Max · Business · Enterprise。",
+  "scenes": [
+    {
+      "title": "Copilot 订阅的套餐说明",
+      "shots": [
+        {
+          "file": "01-copilot-subscription-plans.png",
+          "caption": "「添加供应商」中订阅一栏里 Copilot 的套餐说明",
+          "width": 2560
+        }
+      ]
+    },
+    {
+      "title": "用量页的额度卡片",
+      "shots": [
+        {
+          "file": "02-usage-allowance-cards.png",
+          "caption": "用量页的额度卡片区域",
+          "width": 2560
+        }
+      ]
+    }
+  ],
+  "video": "preview.mp4",
+  "poster": "poster.png",
+  "errors": [
+    "Copilot 订阅的套餐说明 · scroll #modal: nothing visible matches #modal (1 in the page)"
+  ],
+  "leak": false,
+  "skipped": null,
+  "mismatch": "",
+  "unseen": "沙盒里没有 Copilot（Claude、Codex、Copilot、Kiro 等订阅账号都没有），所以账号标签里的 Copilot 套餐、额度卡片上的无限额度与中文「无限」都拿不到真实数据来展示；已保存账号列表与供应商行上的 Copilot 标签同样看不到。",
+  "interactive": true,
+  "pages": 2
+}

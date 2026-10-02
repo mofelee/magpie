@@ -1,0 +1,39 @@
+{
+  "summary": "把网关「最近调用」的耗时与 TTFT、供应商端点测试结果、模型 chip 的提示文案和单个模型测试的状态文案，从写死的 `${ms} ms` 改成复用 ledTook() 的毫秒/秒自适应单位；中英 i18n 对应键的 {ms} 占位符改为 {took}，中文变成「{took}内响应」。",
+  "scenes": [
+    {
+      "title": "网关最近调用的耗时单位",
+      "shots": [
+        {
+          "file": "01-gateway-recent-calls.png",
+          "caption": "网关「最近调用」列表：三次真实请求的状态与耗时",
+          "width": 2560
+        }
+      ]
+    },
+    {
+      "title": "供应商模型测试的耗时显示",
+      "shots": [
+        {
+          "file": "02-provider-detail.png",
+          "caption": "DeepSeek 展开后的端点与模型列表",
+          "width": 2560
+        },
+        {
+          "file": "03-provider-model-test-results.png",
+          "caption": "测试后模型列表上的结果标记",
+          "width": 2560
+        }
+      ]
+    }
+  ],
+  "video": "preview.mp4",
+  "poster": "poster.png",
+  "errors": [],
+  "leak": false,
+  "skipped": null,
+  "mismatch": "",
+  "unseen": "沙盒能显示的部分有限：网关这几次调用都没有 TTFT 数据，所以「TTFT …」那一半改动在最近调用里看不到；模型 chip 的耗时提示是浏览器原生 title，截图里不会渲染出来；「{模型} 在 …内响应」的状态文案要右键单独测试某个模型，而录制原语只有点击/悬停，无法右键；供应商端点测试结果（.res 中的耗时文本）需要先触发端点自己的测试按钮，它的文案不在 diff 里，无法确定选择器。",
+  "interactive": true,
+  "pages": 2
+}

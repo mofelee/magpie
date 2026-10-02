@@ -1,0 +1,14 @@
+<!doctype html><html lang="zh"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>#492 界面预览 · 95dfdcb</title>
+<style>:root{color-scheme:light dark;--bg:#f6f6f7;--fg:#1d1d1f;--muted:#6e6e73;--card:#fff;--line:#e5e5ea}
+@media (prefers-color-scheme:dark){:root{--bg:#111113;--fg:#f2f2f4;--muted:#9a9aa0;--card:#1c1c1f;--line:#2c2c30}}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"Segoe UI","PingFang SC","Noto Sans CJK SC",sans-serif}
+main{max-width:1100px;margin:0 auto;padding:28px 16px 60px}h1{font-size:20px;margin:0 0 4px}.m{color:var(--muted);font-size:13px;margin:0 0 20px}
+video,img{display:block;width:100%;border-radius:10px;border:1px solid var(--line);background:var(--card)}figure{margin:0 0 28px}figcaption{color:var(--muted);font-size:13px;margin-top:8px}
+a{color:inherit}</style>
+<main><h1>#492 界面预览</h1><p class="m">commit 95dfdcb · <a href="https://github.com/yetone/magpie/pull/492">回到 PR</a> · 把网关「最近调用」的耗时与 TTFT、供应商端点测试结果、模型 chip 的提示文案和单个模型测试的状态文案，从写死的 `${ms} ms` 改成复用 ledTook() 的毫秒/秒自适应单位；中英 i18n 对应键的 {ms} 占位符改为 {took}，中文变成「{took}内响应」。</p>
+<figure><video src="preview.mp4" controls autoplay muted playsinline poster="poster.png"></video><figcaption>红线是鼠标走过的轨迹，红色圆环是一次点击；底部文字是这一步在做什么。空格暂停，← → 逐段查看。</figcaption></figure>
+<figure><img src="01-gateway-recent-calls.png" alt="网关「最近调用」列表：三次真实请求的状态与耗时"><figcaption>网关最近调用的耗时单位 · 网关「最近调用」列表：三次真实请求的状态与耗时</figcaption></figure>
+<figure><img src="02-provider-detail.png" alt="DeepSeek 展开后的端点与模型列表"><figcaption>供应商模型测试的耗时显示 · DeepSeek 展开后的端点与模型列表</figcaption></figure>
+<figure><img src="03-provider-model-test-results.png" alt="测试后模型列表上的结果标记"><figcaption>供应商模型测试的耗时显示 · 测试后模型列表上的结果标记</figcaption></figure>
+</main></html>

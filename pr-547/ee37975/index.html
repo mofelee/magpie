@@ -1,0 +1,19 @@
+<!doctype html><html lang="zh"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>#547 界面预览 · ee37975</title>
+<style>:root{color-scheme:light dark;--bg:#f6f6f7;--fg:#1d1d1f;--muted:#6e6e73;--card:#fff;--line:#e5e5ea}
+@media (prefers-color-scheme:dark){:root{--bg:#111113;--fg:#f2f2f4;--muted:#9a9aa0;--card:#1c1c1f;--line:#2c2c30}}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"Segoe UI","PingFang SC","Noto Sans CJK SC",sans-serif}
+main{max-width:1100px;margin:0 auto;padding:28px 16px 60px}h1{font-size:20px;margin:0 0 4px}.m{color:var(--muted);font-size:13px;margin:0 0 20px}
+video,img{display:block;width:100%;border-radius:10px;border:1px solid var(--line);background:var(--card)}figure{margin:0 0 28px}figcaption{color:var(--muted);font-size:13px;margin-top:8px}
+a{color:inherit}</style>
+<main><h1>#547 界面预览</h1><p class="m">commit ee37975 · <a href="https://github.com/yetone/magpie/pull/547">回到 PR</a> · 这次 diff 里只有两处真正落到界面上：路由页的帧循环不再在页面隐藏时继续调度（切到别的标签、窗口被盖住时停下，重新显示/聚焦时恢复），以及「用量」页与面板「用量」标签的刷新被串行化——同一时刻只有一个请求，期间的周期切换、供应方选择和「立即刷新」会被排队并在这次读完后补上。其余改动（网关请求体积与队列上限、用量索引与摘要缓存、插件刷新超时重试）都在后端，界面本身没有新增元素。</p>
+<figure><video src="preview.mp4" controls autoplay muted playsinline poster="poster.png"></video><figcaption>红线是鼠标走过的轨迹，红色圆环是一次点击；底部文字是这一步在做什么。空格暂停，← → 逐段查看。</figcaption></figure>
+<figure><img src="01-routing-live.png" alt="路由页打开着：实时路由与最近请求"><figcaption>路由页隐藏与恢复 · 路由页打开着：实时路由与最近请求</figcaption></figure>
+<figure><img src="02-routing-hidden.png" alt="选中「Agent」时的页面"><figcaption>路由页隐藏与恢复 · 选中「Agent」时的页面</figcaption></figure>
+<figure><img src="03-routing-resumed.png" alt="切回「路由」后的页面"><figcaption>路由页隐藏与恢复 · 切回「路由」后的页面</figcaption></figure>
+<figure><img src="04-usage-overview.png" alt="用量 · 概览，今天的数据"><figcaption>用量页的刷新 · 用量 · 概览，今天的数据</figcaption></figure>
+<figure><img src="05-usage-refreshing.png" alt="点下「立即刷新」之后的用量页"><figcaption>用量页的刷新 · 点下「立即刷新」之后的用量页</figcaption></figure>
+<figure><img src="06-usage-seven-days.png" alt="选「7 天」后的用量页"><figcaption>用量页的刷新 · 选「7 天」后的用量页</figcaption></figure>
+<figure><img src="07-panel-usage.png" alt="面板「用量」标签读到的数据"><figcaption>面板里的用量标签 · 面板「用量」标签读到的数据</figcaption></figure>
+<figure><img src="08-panel-usage-7d.png" alt="面板改选「7 天」之后"><figcaption>面板里的用量标签 · 面板改选「7 天」之后</figcaption></figure>
+</main></html>

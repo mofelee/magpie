@@ -1,0 +1,29 @@
+{
+  "summary": "托盘（panel）「额度」标签里，缓存下来的订阅额度卡片改为使用与余额卡片相同的短「截至 …」日期（原来带「— 暂时无法获取最新额度」），过期窗口/当前额度未知的提示仍在，完整说明保留在卡片提示里；其余改动是后端的错误分类与 Claude 额度 header 保留逻辑，界面上不单独呈现。",
+  "scenes": [
+    {
+      "title": "托盘「额度」标签里的卡片日期",
+      "shots": [
+        {
+          "file": "01-panel-allowances.png",
+          "caption": "托盘面板「额度」标签：沙盒里只有 DeepSeek 余额卡片",
+          "width": 2560
+        },
+        {
+          "file": "02-panel-balance-asof.png",
+          "caption": "余额卡片的日期行（对照：改动后缓存订阅卡片用的是同一形式）",
+          "width": 1340
+        }
+      ]
+    }
+  ],
+  "video": "preview.mp4",
+  "poster": "poster.png",
+  "errors": [],
+  "leak": false,
+  "skipped": null,
+  "mismatch": "",
+  "unseen": "本沙盒只有 DeepSeek 一个供应商、没有任何订阅账号（Claude/Codex…），也不会出现「读取失败并缓存」的订阅卡片，所以被改动的 .pq-card:not(.bal) 短日期行无法真正显示；只能看到余额卡片已有的同款短日期作为对照。",
+  "interactive": true,
+  "pages": 1
+}
