@@ -28,7 +28,7 @@ func (t *otelRequest) skip() bool {
 		return true
 	}
 	if !t.decided {
-		t.suppressed = t.sessionCandidate && usage.OTelSession(t.agent, t.session)
+		t.suppressed = t.sessionCandidate && usage.OTelSessionFresh(t.agent, t.session)
 		t.decided = true
 	}
 	return t.suppressed
