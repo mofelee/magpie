@@ -13109,6 +13109,7 @@ function renderOTel(s, keep) {
   const box = $("#otelList");
   box.replaceChildren();
   let config = { ...(s.otel || {}) };
+  const section = (name) => box.append(el("div", "otel-section", t(name)));
   const row = (id, name, sub, control) => {
     const r = el("div", "row pref");
     r.id = id;
@@ -13117,13 +13118,15 @@ function renderOTel(s, keep) {
     const val = el("div", "val");
     val.append(control);
     r.append(who, val);
+    if (id === "otelEndpointRow" || id === "otelHeadersRow" || id === "otelBodiesRow") r.classList.add("otel-stacked");
     box.append(r);
   };
   const save = (change) => {
     config = { ...config, ...change };
     savePrefs({ ...keep, otel: { ...config } });
   };
-  row("otelExportRow", "OTLP export", "Send model, token, status and timing metadata to your collector. Account credentials stay local, and prompts and replies too unless bodies are included below",
+  section("Collector connection");
+  row("otelExportRow", "OTLP export", "Send traces to your collector. Choose what to include below; account credentials stay local",
     segs([["off", t("Off")], ["on", t("On")]], config.enabled ? "on" : "off", (v) => save({ enabled: v === "on" })));
   const endpoint = input(config.endpoint || "", "http://localhost:4318", "url");
   endpoint.className = "words";
@@ -13148,15 +13151,30 @@ function renderOTel(s, keep) {
     } catch (e) { toast(e.message, true); }
   };
   row("otelHeadersRow", "OTLP headers", "Comma-separated name=value pairs; percent-encode spaces and commas in values", headers);
+  section("Export scope");
   row("otelMetricsRow", "Export metrics", "Also send duration and token histograms. Leave off for a traces-only service such as Langfuse",
     segs([["off", t("Off")], ["on", t("On")]], config.metrics ? "on" : "off", (v) => save({ metrics: v === "on" })));
-  row("otelSessionsRow", "Trace agent conversations", "Reads all local sessions from Codex, Pi, Oh My Pi, Claude Code, Cowork, OpenCode and Gemini CLI, including calls not routed through Magpie. With “Include request and response bodies” on, exports prompts, replies, tool arguments and tool output (including file contents and command output), with secrets masked",
+  row("otelSessionsRow", "Trace agent conversations", "Reads all local sessions from Codex, Pi, Oh My Pi, Claude Code, Cowork, OpenCode and Gemini CLI, including calls not routed through Magpie. When content is included below, exports prompts, replies, tool arguments and tool output (including file contents and command output), with secrets masked",
     segs([["off", t("Off")], ["on", t("On")]], config.sessions ? "on" : "off", (v) => save({ sessions: v === "on" })));
-  row("otelBodiesRow", "Include request and response bodies", "Attach each call's request and reply to its trace, as Langfuse's input and output. Secrets are masked and each body is cut at 256 KB",
-    segs([["off", t("Off")], ["on", t("On")]], config.bodies ? "on" : "off", (v) => save({ bodies: v === "on" })));
-  if (config.bodies) row("otelWholeRow", "Include the whole bodies", "Keep each request and reply entire, not cut at 256 KB. A long reply is written to a temporary file, and a very large body may still be refused by the collector",
-    segs([["off", t("Off")], ["on", t("On")]], config.bodiesWhole ? "on" : "off", (v) => save({ bodiesWhole: v === "on" })));
-  if (s.otelEnv) box.append(el("div", "sub", t("Environment variables override these saved OTLP preferences")));
+  section("Trace content");
+  const mode = !config.bodies ? "metadata" : config.bodiesWhole ? "full" : "limited";
+  const content = segs([["metadata", t("Metadata only")], ["limited", t("Up to 256 KB")], ["full", t("Full content")]], mode,
+    (v) => {
+      for (const button of content.querySelectorAll("button")) button.setAttribute("aria-pressed", String(button.classList.contains("on")));
+      save({ bodies: v !== "metadata", bodiesWhole: v === "full" });
+    });
+  content.setAttribute("role", "group");
+  content.setAttribute("aria-label", t("Request and response content"));
+  for (const [i, button] of [...content.querySelectorAll("button")].entries()) {
+    button.setAttribute("aria-pressed", String(["metadata", "limited", "full"][i] === mode));
+  }
+  const descriptions = {
+    metadata: "Send model, token, status and timing metadata only. Prompts, replies and tool content stay local",
+    limited: "Include requests and replies as trace input and output, with secrets masked. Each body is limited to 256 KB",
+    full: "Include complete requests and replies, with secrets masked. Large content may be refused by your collector",
+  };
+  row("otelBodiesRow", "Request and response content", descriptions[mode], content);
+  if (s.otelEnv) box.append(el("div", "sub otel-env", t("Environment variables override these saved OTLP preferences")));
 }
 
 // renderRedactRules: the user's own rules for secrets magpie's don't know, a

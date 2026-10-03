@@ -1409,7 +1409,9 @@ run in Chromium and WebKit, English and Chinese.
 
 `otel.test.cjs` checks OTLP export and metrics start off, endpoint and masked
 headers save in English and Chinese, environment overrides are indicated, and
-other preference saves retain OTLP choices. It runs in Chromium and WebKit
+other preference saves retain OTLP choices. It also checks all three content modes,
+reload persistence, and readable consent and full-width fields in narrow windows.
+It runs in Chromium and WebKit
 with the real assets and an isolated API fixture:
 
 ```sh

@@ -2069,6 +2069,18 @@ body.window .ag-sk-icon { width: 22px; height: 22px; border-radius: 6px; }
 .row.pref { min-height: 50px; padding: 8px 12px 8px 14px; gap: 14px; }
 .row.pref .who { flex: 1 1 auto; }
 .row.pref .sub { margin-top: 2px; }
+/* Keep export consent readable, and give collector URLs their own line. */
+#otelList .otel-section { padding: 10px 14px 6px; font-size: 11px; font-weight: 600; color: var(--muted); background: var(--pill); }
+#otelList .otel-section:not(:first-child) { border-top: 1px solid var(--line-2); }
+#otelList .row .sub { white-space: normal; overflow-wrap: anywhere; line-height: 1.5; }
+#otelList .row { align-items: flex-start; padding-top: 12px; padding-bottom: 12px; }
+#otelList .otel-stacked { flex-wrap: wrap; gap: 8px; }
+#otelList .otel-stacked > .who { flex-basis: 100%; }
+#otelList .otel-stacked > .val { width: 100%; max-width: none; margin-left: 0; }
+#otelList input.words { width: 100%; }
+#otelList .otel-stacked .segs { margin-left: 0; max-width: 100%; flex-wrap: wrap; }
+#otelList .otel-env { padding: 12px 14px; border-top: 1px solid var(--line-2); font-size: 11.5px; color: var(--muted); }
+
 .session-terminal-select { max-width: min(230px, 45%); height: 29px; color: var(--fg); }
 .session-terminal-select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .row.pref .segs { flex: none; margin-left: auto; }

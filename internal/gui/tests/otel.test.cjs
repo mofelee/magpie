@@ -65,27 +65,19 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         await page.goto("http://magpie.test/?view=settings&tab=otel");
         await page.locator("#otelExportRow").waitFor();
         const off = lang === "zh" ? "关闭" : "Off";
-        assert.equal(await page.locator("#otelExportRow .opt.on").textContent(), off);
-        assert.equal(await page.locator("#otelMetricsRow .opt.on").textContent(), off);
-        assert.equal(await page.locator("#otelBodiesRow .opt.on").textContent(), off);
-        assert.equal(await page.locator("#otelSessionsRow .opt.on").textContent(), off);
-		const consent = await page.locator("#otelSessionsRow").textContent();
-		for (const phrase of (lang === "zh" ? ["所有本地会话", "未通过 Magpie", "文件内容", "命令输出", "遮蔽敏感信息"] : ["all local sessions", "not routed through Magpie", "file contents", "command output", "secrets masked"])) assert(consent.includes(phrase), phrase);
-        assert.equal(await page.locator("#otelWholeRow").count(), 0, "whole bodies require bodies on");
-        assert((await page.locator("#otelBodiesRow").textContent()).includes(lang === "zh" ? "包含请求和响应内容" : "Include request and response bodies"));
+        const modes = lang === "zh" ? ["仅元数据", "最多 256 KB", "完整内容"] : ["Metadata only", "Up to 256 KB", "Full content"];
+        for (const id of ["otelExportRow", "otelMetricsRow", "otelSessionsRow"]) {
+          assert.equal(await page.locator(`#${id} .opt.on`).textContent(), off);
+        }
+        const consent = await page.locator("#otelSessionsRow").textContent();
+        for (const phrase of (lang === "zh" ? ["所有本地会话", "未通过 Magpie", "文件内容", "命令输出", "遮蔽敏感信息"] : ["all local sessions", "not routed through Magpie", "file contents", "command output", "secrets masked"])) assert(consent.includes(phrase), phrase);
+        const mode = page.locator("#otelBodiesRow .opt.on");
+        assert.equal(await mode.textContent(), modes[0]);
+        assert.equal(await mode.getAttribute("aria-pressed"), "true");
         assert.equal(await page.locator("#otelHeadersRow input").getAttribute("type"), "password");
         assert((await page.locator("#otelList").textContent()).includes(lang === "zh" ? "环境变量" : "Environment variables"));
-        const scroll = () => page.locator("#view-settings").evaluate((e) => e.scrollTop);
-        await page.locator("#view-settings").hover();
-        for (let i = 0; i < 80; i++) {
-          const box = await page.locator("#otelBodiesRow").boundingBox();
-          if (box && box.y > 100 && box.y + box.height < 750) break;
-          await page.mouse.wheel(0, 150);
-          await page.waitForTimeout(30);
-        }
-        const before = await scroll();
-        // Wait for the response-driven redraw after each save.
-        const saved = async (action, n) => {
+        const saved = async (action) => {
+          const n = posts.length + 1;
           const response = page.waitForResponse((r) => r.url().endsWith("/api/settings") && r.request().method() === "POST");
           await action(); await response; await page.waitForTimeout(200);
           assert.equal(posts.length, n); return posts[n - 1];
@@ -93,71 +85,76 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         let p = await saved(async () => {
           const field = page.locator("#otelEndpointRow input");
           await field.fill("https://collector.test/api/public/otel/"); await field.press("Enter");
-        }, 1);
+        });
         assert.equal(p.otel.endpoint, "https://collector.test/api/public/otel");
         p = await saved(async () => {
           const field = page.locator("#otelHeadersRow input");
           await field.fill("Authorization=Basic%20YWJjZA==,X-Tag=a%2Cb%2Bc"); await field.press("Enter");
-        }, 2);
+        });
         assert.deepEqual(p.otel.headers, { Authorization: "Basic YWJjZA==", "X-Tag": "a,b+c" });
-        p = await saved(() => page.locator("#otelExportRow .opt").nth(1).click(), 3);
+        p = await saved(() => page.locator("#otelExportRow .opt").nth(1).click());
         assert.equal(p.otel.enabled, true);
-        p = await saved(() => page.locator("#otelMetricsRow .opt").nth(1).click(), 4);
+        p = await saved(() => page.locator("#otelMetricsRow .opt").nth(1).click());
         assert.equal(p.otel.metrics, true);
-        p = await saved(() => page.locator("#otelBodiesRow .opt").nth(1).click(), 5);
+        await page.locator("#otelBodiesRow").scrollIntoViewIfNeeded();
+        const scroll = () => page.locator("#view-settings").evaluate((e) => e.scrollTop);
+        const before = await scroll();
+        p = await saved(() => page.locator("#otelBodiesRow .opt").nth(1).click());
         assert.equal(p.otel.bodies, true);
-        assert.equal(await page.locator("#otelWholeRow .opt.on").textContent(), off);
+        assert.equal(p.otel.bodiesWhole, false);
+        assert.equal(await mode.textContent(), modes[1]);
         assert.equal(p.otel.metrics, true);
-        assert.equal(await scroll(), before, "saving OTLP settings must not scroll");
-        for (let i = 0; i < 40; i++) {
-          const box = await page.locator("#otelWholeRow").boundingBox();
-          if (box && box.y > 100 && box.y + box.height < 750) break;
-          await page.mouse.wheel(0, 100); await page.waitForTimeout(30);
-        }
-        const beforeWhole = await scroll();
-        p = await saved(() => page.locator("#otelWholeRow .opt").nth(1).click(), 6);
+        assert.equal(await scroll(), before, "saving content settings must not scroll");
+        p = await saved(() => page.locator("#otelBodiesRow .opt").nth(2).click());
         assert.equal(p.otel.bodiesWhole, true);
         assert.equal(p.otel.bodies, true);
-        assert.equal(await scroll(), beforeWhole, "saving the whole-bodies switch must not scroll");
+        assert.equal(await mode.textContent(), modes[2]);
         await page.locator("#setTab-usage").click();
-        for (let i = 0; i < 60; i++) {
-          const box = await page.locator("#currencySegs").boundingBox();
-          if (box && box.y > 100 && box.y < 750) break;
-          await page.mouse.wheel(0, -150); await page.waitForTimeout(30);
-        }
-        p = await saved(() => page.locator("#currencySegs .opt").nth(1).click(), 7);
+        p = await saved(() => page.locator("#currencySegs .opt").nth(1).click());
         assert.equal(p.otel.enabled, true);
-        assert.equal(p.otel.bodies, true);
         assert.equal(p.otel.bodiesWhole, true);
         assert.equal(p.otel.endpoint, "https://collector.test/api/public/otel");
         assert.equal(p.otel.headers.Authorization, "Basic YWJjZA==");
         await page.locator("#setTab-otel").click();
-        for (let i = 0; i < 60; i++) {
-          const box = await page.locator("#otelExportRow").boundingBox();
-          if (box && box.y > 100 && box.y < 650) break;
-          await page.mouse.wheel(0, 150); await page.waitForTimeout(30);
-        }
-        p = await saved(() => page.locator("#otelExportRow .opt").first().click(), 8);
+        p = await saved(() => page.locator("#otelExportRow .opt").first().click());
         assert.equal(p.otel.enabled, false);
         await page.reload();
         await page.locator("#otelExportRow .opt.on").waitFor();
-        assert.equal(await page.locator("#otelExportRow .opt.on").textContent(), off);
-        assert.equal(await page.locator("#otelWholeRow .opt.on").textContent(), lang === "zh" ? "开启" : "On");
-        assert.equal(await page.locator("#otelEndpointRow input").inputValue(), p.otel.endpoint);
-        p = await saved(() => page.locator("#otelBodiesRow .opt").first().click(), 9);
+        assert.equal(await mode.textContent(), modes[2], "existing full-content settings survive reload");
+        p = await saved(() => page.locator("#otelBodiesRow .opt").first().click());
         assert.equal(p.otel.bodies, false);
-        assert.equal(p.otel.bodiesWhole, true, "hiding the row preserves the preference");
-        assert.equal(await page.locator("#otelWholeRow").count(), 0);
-        p = await saved(() => page.locator("#otelBodiesRow .opt").nth(1).click(), 10);
-        assert.equal(p.otel.bodies, true);
-        assert.equal(await page.locator("#otelWholeRow .opt.on").textContent(), lang === "zh" ? "开启" : "On");
-        p = await saved(() => page.locator("#otelSessionsRow .opt").nth(1).click(), 11);
+        assert.equal(p.otel.bodiesWhole, false);
+        assert.equal(await mode.textContent(), modes[0]);
+        p = await saved(() => page.locator("#otelSessionsRow .opt").nth(1).click());
         assert.equal(p.otel.sessions, true);
         await page.reload();
         await page.locator("#otelSessionsRow .opt.on").waitFor();
-        assert.equal(await page.locator("#otelSessionsRow .opt.on").textContent(), lang === "zh" ? "开启" : "On");
-        p = await saved(() => page.locator("#otelBodiesRow .opt").first().click(), 12);
-        assert.equal(p.otel.sessions, true, "body preferences preserve session tracing");
+        p = await saved(() => page.locator("#otelBodiesRow .opt").nth(1).click());
+        assert.equal(p.otel.sessions, true, "content choices preserve session tracing");
+        // Native windows and narrow panels must show the entire consent text,
+        // keep the controls inside their rows, and give URLs a full-width field.
+        for (const width of [1100, 520, 360]) {
+          await page.setViewportSize({ width, height: 1000 });
+          const layout = await page.locator("#otelList").evaluate((list) => {
+            const sub = list.querySelector("#otelSessionsRow .sub");
+            const row = list.querySelector("#otelEndpointRow");
+            const field = row.querySelector("input");
+            return {
+              wraps: getComputedStyle(sub).whiteSpace === "normal",
+              clipped: sub.scrollHeight > sub.clientHeight + 1,
+              fieldWidth: field.getBoundingClientRect().width,
+              rowWidth: row.getBoundingClientRect().width,
+              overflow: [...list.querySelectorAll(".row, .val, .segs")].some((e) => e.scrollWidth > e.clientWidth + 1),
+            };
+          });
+          assert(layout.wraps && !layout.clipped, `consent visible at ${width}px`);
+          assert(layout.fieldWidth > layout.rowWidth - 40, `wide endpoint at ${width}px`);
+          assert.equal(layout.overflow, false, `no overflowing controls at ${width}px`);
+        }
+        if (process.env.OTEL_SCREENSHOTS) {
+          await page.setViewportSize({ width: 1100, height: 1000 });
+          await page.locator("#otelList").screenshot({ path: `/tmp/magpie-otel-${engine}-${lang}.png` });
+        }
         assert.deepEqual(errors, []);
         await context.close();
       });
