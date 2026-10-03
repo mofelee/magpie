@@ -233,6 +233,13 @@ func (r *TraceReader) Poll(bodies bool) []TraceSpan {
 		h.Close()
 		budget -= read
 		if c.offset == f.size {
+			// Prefer timing-final from this batch. Plain Pi also works without
+			// that extension: finish its completed turn once at end of input.
+			for _, s := range c.finishPi() {
+				if !s.End.Before(r.Since) {
+					result = append(result, s)
+				}
+			}
 			c.size, c.mod = f.size, f.mod
 		}
 	}
@@ -590,6 +597,9 @@ func (c *traceCursor) pi(line []byte, bodies bool) []TraceSpan {
 					}
 				}
 			}
+			if previous.completed {
+				interrupted = append(interrupted, c.root(previous, previous.last, previous.failed))
+			}
 			delete(c.turns, c.current)
 		}
 		c.current = o.ID
@@ -678,7 +688,20 @@ func (c *traceCursor) pi(line []byte, bodies bool) []TraceSpan {
 		if bodies {
 			t.output = string(m.Content)
 		}
-		spans = append(spans, c.root(t, o.Timestamp, s.Error))
+	}
+	return spans
+}
+
+func (c *traceCursor) finishPi() []TraceSpan {
+	if c.agent != "pi" && c.agent != "omp" {
+		return nil
+	}
+	var spans []TraceSpan
+	for id, t := range c.turns {
+		if t.completed {
+			spans = append(spans, c.root(t, t.last, t.failed))
+			delete(c.turns, id)
+		}
 	}
 	return spans
 }

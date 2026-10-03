@@ -179,6 +179,51 @@ func TestOTelSessionDedupOnlyUnkeyedLoopback(t *testing.T) {
 	}
 }
 
+func TestOTelSessionDiscoveredDuringFirstRequest(t *testing.T) {
+	t.Setenv("PI_CODING_AGENT_DIR", t.TempDir())
+	t.Setenv("PI_CODING_AGENT_SESSION_DIR", "")
+	t.Setenv("CODEX_HOME", t.TempDir())
+	t.Setenv("MAGPIE_OTEL_ENABLED", "true")
+	t.Setenv("MAGPIE_OTEL_ENDPOINT", "http://127.0.0.1:1")
+	t.Setenv("MAGPIE_OTEL_HEADERS", "")
+	t.Setenv("MAGPIE_OTEL_SESSIONS", "true")
+	stop := usage.StartOTel()
+	t.Cleanup(stop)
+	req := httptest.NewRequest("POST", "/v1/chat/completions", nil)
+	req.RemoteAddr = "127.0.0.1:1234"
+	req.Header.Set("User-Agent", "pi/1.0")
+	req.Header.Set("X-Session-Id", "late-session")
+	_, pending := beginOTelRequest(req, "", nil)
+	_, exported := beginOTelRequest(req, "", nil)
+	if pending == nil || exported == nil || !pending.sessionCandidate {
+		t.Fatal("unseen session must retain gateway fallback")
+	}
+	if exported.skip() {
+		t.Fatal("unseen session suppressed")
+	}
+	dir := filepath.Join(os.Getenv("PI_CODING_AGENT_DIR"), "sessions", "work")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "2026-10-03T00-00-00_late-session.jsonl"), []byte("{\"type\":\"session\",\"id\":\"late-session\"}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for !usage.OTelSession("pi", "late-session") && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !usage.OTelSession("pi", "late-session") || !pending.skip() {
+		t.Fatal("newly discovered transcript duplicated gateway trace")
+	}
+	if exported.skip() {
+		t.Fatal("discovery after an exported attempt must retain its root")
+	}
+	remote := &otelRequest{agent: "pi", session: "late-session"}
+	if remote.skip() {
+		t.Fatal("remote/keyed request must retain gateway tracing")
+	}
+}
+
 func TestOTelExportsGatewayUsageWithoutContent(t *testing.T) {
 	f := &fake{ctype: "application/json", reply: `{"id":"c1","model":"m1","choices":[{"message":{"role":"assistant","content":"PRIVATE-REPLY"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5}}`}
 	setup(t, provider.Chat, f)

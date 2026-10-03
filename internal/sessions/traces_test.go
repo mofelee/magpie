@@ -150,12 +150,42 @@ func TestPiTracePairsToolsAndUsesFinalTiming(t *testing.T) {
 		t.Fatalf("model %+v tool %+v", model, tool)
 	}
 	spans := feed(base.Add(8*time.Second), map[string]any{"type": "message", "id": "final", "parentId": "result", "message": map[string]any{"role": "assistant", "timestamp": base.Add(6 * time.Second).UnixMilli(), "model": "model", "stopReason": "stop", "content": []any{map[string]string{"type": "text", "text": "answer"}}}})
-	if len(spans) != 2 || spans[1].ID != root.ID || spans[1].Output == "" {
+	if len(spans) != 1 || spans[0].Kind != "generation" || spans[0].Output == "" {
 		t.Fatalf("final: %+v", spans)
 	}
 	finished := feed(base.Add(8*time.Second), map[string]any{"type": "custom", "customType": "timing-final", "data": map[string]any{"totalMs": 8000, "endAt": base.Add(8 * time.Second).UnixMilli()}})[0]
 	if finished.ID != root.ID || finished.Start != base || finished.End != base.Add(8*time.Second) {
 		t.Fatalf("timing: %+v", finished)
+	}
+	if spans := c.finishPi(); len(spans) != 0 {
+		t.Fatalf("timed root exported again: %+v", spans)
+	}
+}
+
+func TestPiCompletedRootWithoutTimingExportsOnce(t *testing.T) {
+	for _, agent := range []string{"pi", "omp"} {
+		t.Run(agent, func(t *testing.T) {
+			c := traceTestCursor(agent)
+			c.session = "session"
+			at := time.Now().UTC()
+			feed := func(o map[string]any) []TraceSpan {
+				o["timestamp"] = at
+				b, _ := json.Marshal(o)
+				return c.line(b, true)
+			}
+			root := feed(map[string]any{"type": "message", "id": "user", "message": map[string]any{"role": "user", "content": "question"}})[0]
+			feed(map[string]any{"type": "message", "id": "final", "parentId": "user", "message": map[string]any{"role": "assistant", "stopReason": "stop", "content": "answer"}})
+			finished := c.finishPi()
+			if len(finished) != 1 || finished[0].ID != root.ID || finished[0].Input != `"question"` || finished[0].Output != `"answer"` {
+				t.Fatalf("fallback: %+v", finished)
+			}
+			if len(c.finishPi()) != 0 {
+				t.Fatal("fallback exported twice")
+			}
+			if spans := feed(map[string]any{"type": "custom", "parentId": "final", "customType": "timing-final", "data": map[string]any{"totalMs": 1000, "endAt": at.Add(time.Second).UnixMilli()}}); len(spans) != 0 {
+				t.Fatalf("late timing exported duplicate: %+v", spans)
+			}
+		})
 	}
 }
 
