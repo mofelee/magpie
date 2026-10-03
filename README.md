@@ -966,6 +966,15 @@ duplicate it. Attempt timings include any wait for a concurrency slot, while
 routing and retry delays remain visible as gaps inside the parent span.
 Tool execution inside the caller is outside the gateway's trace.
 
+Model-call spans also send estimated USD input, output and total costs to
+Langfuse via `langfuse.observation.cost_details`, using the same effective
+prices as Magpie's usage ledger (custom prices first, then catalog prices).
+Input cost includes cache reads and writes; reasoning tokens are already
+included in output cost. Explicit zero prices are exported too. Unknown
+prices are omitted so Langfuse can use its own model pricing. Parent and tool
+spans carry no costs, avoiding duplicate counting. Subscription costs at
+catalog prices are API-equivalent estimates, not subscription charges.
+
 Enable **Trace agent conversations** to instead export one trace per
 user interaction, grouping model calls and tool executions under an agent
 root. Conversation IDs group those traces into Langfuse sessions. Gateway traces

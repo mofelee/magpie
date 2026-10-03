@@ -64,6 +64,7 @@ type OTelSpan struct {
 
 func (e *otelExporter) traces(records []Record) any {
 	spans := make([]any, 0, len(records))
+	priceOf := pricer()
 	for _, r := range records {
 		var traceID [16]byte
 		if r.OTel == nil {
@@ -162,6 +163,24 @@ func (e *otelExporter) traces(records []Record) any {
 				}
 			}
 			span["attributes"] = a
+		}
+		// Price only model calls, never their gateway/conversation parents or
+		// tools. Cache reads/writes belong to input cost; reasoning is already
+		// included in output tokens. Use the ledger's effective tariff, including
+		// explicit free models, and leave unknown prices for Langfuse to infer.
+		generation := r.OTel == nil || !r.OTel.Root && (!r.OTel.Session || r.OTel.Type == "generation")
+		if generation && !r.IsRejected() {
+			if pr := priceOf(r); pr != nil {
+				cost, err := json.Marshal(map[string]float64{
+					"input":  pr.Cost(r.Input, 0, r.CacheRead, r.CacheWrite),
+					"output": pr.Cost(0, r.Output, 0, 0),
+					"total":  pr.Cost(r.Input, r.Output, r.CacheRead, r.CacheWrite),
+				})
+				if err == nil {
+					a = append(a, otelString("langfuse.observation.cost_details", string(cost)))
+					span["attributes"] = a
+				}
+			}
 		}
 		spans = append(spans, span)
 	}
