@@ -58,6 +58,36 @@ func TestSessionTraceWirePrivacyAndTokenOwnership(t *testing.T) {
 	}
 }
 
+func TestSessionExporterDefersPendingRoot(t *testing.T) {
+	e := newOTelExporter()
+	defer e.cancel()
+	cfg := settings.OTel{Bodies: true}
+	at := time.Now()
+	root := sessions.TraceSpan{Agent: "codex", Session: "session", Turn: "turn", ID: "1111111111111111", Kind: "span", Name: "codex interaction", Start: at, End: at, Pending: true}
+	e.offerSession(root, cfg)
+	if len(e.queue) != 0 {
+		t.Fatal("unfinished root exported")
+	}
+	root.Pending = false
+	root.End = at.Add(time.Minute)
+	root.Input = `[{"type":"local_image","path":"/tmp/image.png"},{"type":"text","text":"Describe this image"}]`
+	root.Output = "An image"
+	e.offerSession(root, cfg)
+	if len(e.queue) != 1 {
+		t.Fatal("completed root missing")
+	}
+	record := (<-e.queue).record
+	wire, err := json.Marshal(e.traces([]Record{record}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"langfuse.observation.input", "langfuse.observation.output", "local_image", "Describe this image", "An image"} {
+		if !strings.Contains(string(wire), want) {
+			t.Fatalf("completed root missing %s", want)
+		}
+	}
+}
+
 func TestOTelSessionWatcherExportsNewInteractionWithoutGatewayDuplicates(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_DATA_HOME", t.TempDir())

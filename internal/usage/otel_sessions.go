@@ -83,6 +83,15 @@ func sessionRecord(s sessions.TraceSpan, config settings.OTel) Record {
 			Name: s.Name, Type: typ, SessionID: s.Session, TraceName: s.Agent + " interaction", Session: true, Inferred: s.Inferred, Update: s.Update}}
 }
 
+func (e *otelExporter) offerSession(s sessions.TraceSpan, config settings.OTel) {
+	// OTLP spans are complete observations, not mutable start/end events.
+	// Sending the empty start root and later reusing its ID can leave Langfuse
+	// displaying the empty copy even though the completed copy has bodies.
+	if !s.Pending {
+		e.offer(otelItem{record: sessionRecord(s, config), config: config})
+	}
+}
+
 func (e *otelExporter) watchSessions(ctx context.Context, started time.Time) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -142,7 +151,7 @@ func (e *otelExporter) watchSessions(ctx context.Context, started time.Time) {
 			if ctx.Err() != nil {
 				return
 			}
-			e.offer(otelItem{record: sessionRecord(s, config), config: config})
+			e.offerSession(s, config)
 		}
 	}
 }

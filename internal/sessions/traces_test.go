@@ -20,6 +20,31 @@ func traceTestCursor(agent string) *traceCursor {
 	return &traceCursor{agent: agent, turns: map[string]*traceTurn{}, tools: map[string]TraceSpan{}, parents: map[string]string{}}
 }
 
+func TestCodexTraceRootWaitsForCompleteImageFirstTurn(t *testing.T) {
+	for _, bodies := range []bool{false, true} {
+		c := traceTestCursor("codex")
+		at := time.Now().UTC()
+		traceLine(t, c, at, "session_meta", map[string]any{"id": "session"}, bodies)
+		root := traceLine(t, c, at, "event_msg", map[string]any{"type": "task_started", "turn_id": "turn"}, bodies)[0]
+		if !root.Pending {
+			t.Fatal("empty start root must not be exported")
+		}
+		input := json.RawMessage(`[{"type":"local_image","path":"/tmp/image.png"},{"type":"text","text":"Describe this image"}]`)
+		traceLine(t, c, at.Add(time.Second), "event_msg", map[string]any{"type": "item_completed", "turn_id": "turn", "item": map[string]any{"type": "UserMessage", "content": input}}, bodies)
+		model := traceLine(t, c, at.Add(2*time.Second), "token_usage_record", map[string]any{"turn_id": "turn", "response_id": "response"}, bodies)[0]
+		finished := traceLine(t, c, at.Add(3*time.Second), "event_msg", map[string]any{"type": "task_complete", "turn_id": "turn", "last_agent_message": "An image"}, bodies)[0]
+		if finished.Pending || finished.ID != root.ID || model.Parent != root.ID {
+			t.Fatal("completion or child ancestry lost")
+		}
+		if bodies && (finished.Input != string(input) || model.Input != string(input) || finished.Output != "An image") {
+			t.Fatal("image-first input or final output lost")
+		}
+		if !bodies && (finished.Input != "" || finished.Output != "" || model.Input != "") {
+			t.Fatal("bodies exported when disabled")
+		}
+	}
+}
+
 func TestCodexTraceRecordedToolsAndInterruptedTurns(t *testing.T) {
 	c := traceTestCursor("codex")
 	base := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
@@ -43,6 +68,69 @@ func TestCodexTraceRecordedToolsAndInterruptedTurns(t *testing.T) {
 	next := traceLine(t, c, end, "event_msg", map[string]any{"type": "task_started", "turn_id": "next"}, false)[0]
 	if next.ID == root.ID || TraceID(next.Agent, next.Session, next.Turn) == TraceID(root.Agent, root.Session, root.Turn) {
 		t.Fatal("two turns share a trace")
+	}
+}
+
+func TestCodexTraceNewTurnClosesMissingCompletion(t *testing.T) {
+	for _, first := range []string{"task_started", "turn_context"} {
+		t.Run(first, func(t *testing.T) {
+			c := traceTestCursor("codex")
+			at := time.Now().UTC()
+			traceLine(t, c, at, "session_meta", map[string]any{"id": "session"}, true)
+			root := traceLine(t, c, at, "event_msg", map[string]any{"type": "task_started", "turn_id": "old"}, true)[0]
+			traceLine(t, c, at.Add(time.Second), "event_msg", map[string]any{"type": "item_completed", "turn_id": "old", "item": map[string]any{"type": "UserMessage", "content": "question"}}, true)
+			traceLine(t, c, at.Add(2*time.Second), "response_item", map[string]any{"type": "function_call", "call_id": "tool", "name": "exec", "arguments": "command"}, true)
+			typ := "event_msg"
+			if first == "turn_context" {
+				typ = "turn_context"
+			}
+			end := at.Add(3 * time.Second)
+			spans := traceLine(t, c, end, typ, map[string]any{"type": first, "turn_id": "new", "model": "model"}, true)
+			var roots, tools int
+			for _, s := range spans {
+				if s.Turn != "old" {
+					continue
+				}
+				if !s.Error || s.Pending || s.End != end {
+					t.Fatalf("unfinished observation: %+v", s)
+				}
+				if s.Kind == "span" {
+					roots++
+					if s.ID != root.ID || !s.Inferred || s.Input != `"question"` {
+						t.Fatalf("interrupted root: %+v", s)
+					}
+				} else if s.Kind == "tool" {
+					tools++
+					if s.Parent != root.ID {
+						t.Fatal("tool ancestry lost")
+					}
+				}
+			}
+			if roots != 1 || tools != 1 || c.turns["old"] != nil || len(c.tools) != 0 {
+				t.Fatal("interrupted turn or tool not closed")
+			}
+			if spans := traceLine(t, c, end, "event_msg", map[string]any{"type": "task_started", "turn_id": "new"}, true); len(spans) != 1 || !spans[0].Pending || spans[0].ID == root.ID {
+				t.Fatal("next turn duplicated the interrupted root")
+			}
+		})
+	}
+}
+
+func TestPiAndOMPTraceStartRootIsPending(t *testing.T) {
+	for _, agent := range []string{"pi", "omp"} {
+		t.Run(agent, func(t *testing.T) {
+			c := traceTestCursor(agent)
+			c.session = "session"
+			at := time.Now().UTC()
+			line, err := json.Marshal(map[string]any{"type": "message", "id": "user", "timestamp": at, "message": map[string]any{"role": "user", "content": "question"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			spans := c.line(line, true)
+			if len(spans) != 1 || !spans[0].Pending || spans[0].Input != `"question"` {
+				t.Fatalf("start root must stay pending: %+v", spans)
+			}
+		})
 	}
 }
 

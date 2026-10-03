@@ -24,6 +24,7 @@ type TraceSpan struct {
 	Reasoning                                                             int
 	Error, Inferred                                                       bool
 	Update                                                                bool
+	Pending                                                               bool // ancestry only; export the root when the interaction finishes
 }
 
 type traceTurn struct {
@@ -269,6 +270,32 @@ func (c *traceCursor) line(line []byte, bodies bool) []TraceSpan {
 	return c.codex(line, bodies)
 }
 
+// A new turn is evidence that the previous one stopped, even if Codex was
+// killed before recording task_complete or turn_aborted. Do not infer this
+// from inactivity: a model or tool can legitimately take a long time.
+func (c *traceCursor) interruptCodexTurn(next string, at time.Time) []TraceSpan {
+	t := c.turns[c.current]
+	if t == nil || c.current == next {
+		return nil
+	}
+	end := at
+	if t.last.After(end) {
+		end = t.last
+	}
+	root := c.root(t, end, true)
+	root.Inferred = true
+	spans := []TraceSpan{root}
+	for key, call := range c.tools {
+		if call.Turn == t.id {
+			call.End, call.Error = end, true
+			spans = append(spans, call)
+			delete(c.tools, key)
+		}
+	}
+	delete(c.turns, t.id)
+	return spans
+}
+
 func (c *traceCursor) codex(line []byte, bodies bool) []TraceSpan {
 	var o struct {
 		Type      string
@@ -325,10 +352,11 @@ func (c *traceCursor) codex(line []byte, bodies bool) []TraceSpan {
 		if p.TurnID == "" {
 			return nil
 		}
+		interrupted := c.interruptCodexTurn(p.TurnID, o.Timestamp)
 		c.current = p.TurnID
 		t := c.turn(p.TurnID, o.Timestamp)
 		t.model = p.Model
-		return nil
+		return interrupted
 	}
 	id := p.TurnID
 	if id == "" {
@@ -370,12 +398,15 @@ func (c *traceCursor) codex(line []byte, bodies bool) []TraceSpan {
 			return []TraceSpan{s}
 		}
 	case o.Type == "event_msg" && p.Type == "task_started":
+		interrupted := c.interruptCodexTurn(id, o.Timestamp)
 		c.current = id
 		at := traceTime(p.StartedAt, false)
 		if !at.IsZero() {
 			t.start, t.last = at, at
 		}
-		return []TraceSpan{c.root(t, t.start, false)}
+		root := c.root(t, t.start, false)
+		root.Pending = true
+		return append(interrupted, root)
 	case o.Type == "event_msg" && p.Type == "item_completed":
 		start, end := traceTime(p.StartedAtMS, true), traceTime(p.CompletedAtMS, true)
 		if start.IsZero() {
@@ -567,7 +598,9 @@ func (c *traceCursor) pi(line []byte, bodies bool) []TraceSpan {
 		if bodies {
 			t.input = string(m.Content)
 		}
-		return append(interrupted, c.root(t, t.start, false))
+		root := c.root(t, t.start, false)
+		root.Pending = true
+		return append(interrupted, root)
 	}
 	id := c.parents[o.ParentID]
 	if id == "" {
